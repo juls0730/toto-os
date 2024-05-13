@@ -2,6 +2,8 @@
 
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
+use super::{HHDM_REQUEST, MEMMAP_REQUEST};
+
 pub const PAGE_SIZE: usize = 4096;
 
 #[derive(Debug)]
@@ -11,6 +13,10 @@ pub struct PhysicalMemoryManager {
     last_used_page_idx: AtomicUsize,
     usable_pages: AtomicUsize,
     used_pages: AtomicUsize,
+}
+
+pub fn pmm_init() {
+    super::PHYSICAL_MEMORY_MANAGER.set(PhysicalMemoryManager::new());
 }
 
 impl PhysicalMemoryManager {
@@ -23,11 +29,22 @@ impl PhysicalMemoryManager {
             used_pages: AtomicUsize::new(0),
         };
 
-        let hhdm_offset = *super::HHDM_OFFSET;
+        let hhdm_req = HHDM_REQUEST
+            .get_response()
+            .get()
+            .expect("Failed to get Higher Half Direct Map!");
+
+        let hhdm_offset = hhdm_req.offset as usize;
+
+        let memmap = MEMMAP_REQUEST
+            .get_response()
+            .get_mut()
+            .expect("Failed to get Memory map!")
+            .memmap_mut();
 
         let mut highest_addr: usize = 0;
 
-        for entry in super::MEMMAP.lock().iter() {
+        for entry in memmap.iter() {
             if entry.typ == limine::MemoryMapEntryType::Usable {
                 pmm.usable_pages
                     .fetch_add(entry.len as usize / PAGE_SIZE, Ordering::SeqCst);
@@ -42,7 +59,7 @@ impl PhysicalMemoryManager {
         let bitmap_size =
             ((pmm.highest_page_idx.load(Ordering::SeqCst) / 8) + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
-        for entry in super::MEMMAP.lock().iter_mut() {
+        for entry in memmap.iter_mut() {
             if entry.typ != limine::MemoryMapEntryType::Usable {
                 continue;
             }
@@ -63,7 +80,7 @@ impl PhysicalMemoryManager {
             }
         }
 
-        for entry in super::MEMMAP.lock().iter() {
+        for entry in memmap.iter() {
             if entry.typ != limine::MemoryMapEntryType::Usable {
                 continue;
             }
@@ -99,7 +116,7 @@ impl PhysicalMemoryManager {
         return core::ptr::null_mut();
     }
 
-    pub fn alloc_nozero(&self, pages: usize) -> Result<*mut u8, ()> {
+    pub fn alloc_nozero(&self, pages: usize) -> *mut u8 {
         // Attempt to allocate n pages with a search limit of the amount of usable pages
         let mut page_addr = self.inner_alloc(pages, self.highest_page_idx.load(Ordering::SeqCst));
 
@@ -111,22 +128,27 @@ impl PhysicalMemoryManager {
 
             // If page_addr is still null, we have ran out of usable memory
             if page_addr.is_null() {
-                return Err(());
+                return core::ptr::null_mut();
             }
         }
 
         self.used_pages.fetch_add(pages, Ordering::SeqCst);
 
-        return Ok(page_addr);
+        return page_addr;
     }
 
-    pub fn alloc(&self, pages: usize) -> Result<*mut u8, ()> {
-        let ret = self.alloc_nozero(pages)?;
+    pub fn alloc(&self, pages: usize) -> *mut u8 {
+        let ret = self.alloc_nozero(pages);
+
+        if ret.is_null() {
+            return ret;
+        }
+
         unsafe {
             core::ptr::write_bytes(ret, 0x00, pages * PAGE_SIZE);
         };
 
-        return Ok(ret);
+        return ret;
     }
 
     pub fn dealloc(&self, addr: *mut u8, pages: usize) {

@@ -7,14 +7,14 @@ CappuccinOS is a small x86-64 operating system written from scratch in rust. Thi
 ## Features
 - [X] Serial output
 - [X] Hardware interrupts
-- [X] PS/2 Keyboard support
-- [X] ANSI color codes in console
 - [X] Heap allocation
 - [ ] Externalized kernel modules
     - [X] Initramfs
         - [X] Squashfs driver
             - [X] Programmatic reads
             - [X] Decompression
+- [ ] PS/2 Keyboard support
+- [ ] ANSI color codes in console
 - [ ] SMP
     - [ ] Use APIC instead of PIC
 - [ ] Pre-emptive multitasking
@@ -31,7 +31,7 @@ CappuccinOS is a small x86-64 operating system written from scratch in rust. Thi
   - [ ] MMC/Nand device support
   - [ ] M.2 NVME device support
 - [ ] Basic shell
-  - [X] Basic I/O
+  - [ ] Basic I/O
     - [ ] Executing Programs from disk
 - [ ] Lua interpreter
 - [ ] Memory management
@@ -114,12 +114,15 @@ Some Resources I used over the creation of CappuccinOS:
 - [OSDev wiki](https://wiki.osdev.org)
 - Wikipedia on various random things
 - [Squashfs Binary Format](https://dr-emann.github.io/squashfs/squashfs.html)
+- [GRUB](https://www.gnu.org/software/grub/grub-download.html) Mainly for Squashfs things, even though I later learned it does things incorrectly
 
 And mostly for examples of how people did stuff I used these (projects made by people who might actually have a clue what they're doing):
+- This is missing some entries somehow
 - [MOROS](https://github.com/vinc/moros)
 - [Felix](https://github.com/mrgian/felix)
 - [mOS](https://github.com/Moldytzu/mOS)
 - [rust_os](https://github.com/thepowersgang/rust_os/tree/master)
+- [Lyre](https://github.com/Lyre-OS/klyre)
 
 ## License
 CappuccinOS is license under the MIT License. Feel free to modify and distribute in accordance with the license.

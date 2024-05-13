@@ -1,10 +1,12 @@
 pub mod apic;
-mod exceptions;
+pub mod exceptions;
 
 use crate::{
     // arch::{apic, x86_common::pic::ChainedPics},
     libs::sync::Mutex,
 };
+
+use self::apic::APIC;
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
@@ -73,7 +75,7 @@ pub fn idt_set_gate(num: u8, function_ptr: usize) {
     // If the interrupt with this number occurred with the "null" interrupt handler
     // We will need to tell the PIC that interrupt is over, this stops new interrupts
     // From never firing because "it was never finished"
-    // signal_end_of_interrupt(num);
+    // signal_end_of_interrupt();
 }
 
 extern "x86-interrupt" fn null_interrupt_handler() {
@@ -86,7 +88,7 @@ extern "x86-interrupt" fn timer_handler() {
     signal_end_of_interrupt();
 }
 
-fn idt_init() {
+pub fn idt_init() {
     unsafe {
         let idt_size = core::mem::size_of::<IdtEntry>() * 256;
         {
@@ -101,8 +103,6 @@ fn idt_init() {
             idt_set_gate(num, null_interrupt_handler as usize);
         }
 
-        exceptions::set_exceptions();
-
         idt_set_gate(InterruptIndex::Timer.as_u8(), timer_handler as usize);
         idt_set_gate(0x80, syscall as usize);
 
@@ -114,7 +114,7 @@ fn idt_init() {
 }
 
 pub fn signal_end_of_interrupt() {
-    apic::APIC.end_of_interrupt();
+    APIC.end_of_interrupt();
 }
 
 #[naked]
@@ -146,12 +146,11 @@ pub extern "C" fn syscall_handler(_rdi: u64, _rsi: u64, rdx: u64, rcx: u64) {
     crate::print!("{message}");
 }
 
-pub fn init() {
-    crate::drivers::acpi::init_acpi();
-
-    idt_init();
-
+pub fn enable_interrupts() {
     unsafe {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         core::arch::asm!("sti");
+
+        // TODO: arm and riscv stuff
     }
 }

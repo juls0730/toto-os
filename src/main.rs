@@ -1,14 +1,11 @@
-#![feature(abi_x86_interrupt, naked_functions)]
-// Unforunately, this doesnt actually work with rust-analyzer, so if you want the annoying
-// Error about "unnecessary returns" to go away, see https://github.com/rust-lang/rust-analyzer/issues/16542
-// And if that issue ever gets closed, and you're reading this, feel free to remove this comment
+#![feature(abi_x86_interrupt, naked_functions, const_mut_refs)]
 #![allow(clippy::needless_return)]
 #![no_std]
 #![no_main]
 
 use core::ffi::CStr;
 
-use alloc::{format, vec::Vec};
+use alloc::vec::Vec;
 use limine::KernelFileRequest;
 
 use crate::drivers::fs::{
@@ -27,15 +24,20 @@ pub static KERNEL_REQUEST: KernelFileRequest = KernelFileRequest::new(0);
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    arch::interrupts::init();
-
     drivers::serial::init_serial();
+    arch::gdt::gdt_init();
+    arch::interrupts::idt_init();
+    arch::interrupts::exceptions::exceptions_init();
+    arch::interrupts::enable_interrupts();
+    // TODO: memory stuff
+    mem::pmm::pmm_init();
+    mem::init_allocator();
+    drivers::acpi::init_acpi();
 
-    // let squashfs = initramfs::init();
+    kmain()
+}
 
-    // crate::println!("{:?}", squashfs.superblock);
-
+pub fn kmain() -> ! {
     let _ = drivers::fs::vfs::add_vfs("/", alloc::boxed::Box::new(initramfs::init()));
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -57,36 +59,14 @@ pub extern "C" fn _start() -> ! {
     // let file = vfs_open("/example.txt").unwrap();
     crate::println!(
         "{:X?}",
-        core::str::from_utf8(
-            &file
-                .ops
-                .open(0, UserCred { uid: 0, gid: 0 }, file.as_ptr())
-                .unwrap()
-        )
-        .unwrap()
+        &file
+            .ops
+            .open(0, UserCred { uid: 0, gid: 0 }, file.as_ptr())
+            .unwrap()
     );
 
-    let fb = drivers::video::get_framebuffer().unwrap();
-    let length = (fb.height * fb.width) * (fb.bpp / 8);
-    let pages = length / crate::mem::pmm::PAGE_SIZE;
-    let buffer = unsafe {
-        core::slice::from_raw_parts_mut(
-            crate::mem::PHYSICAL_MEMORY_MANAGER
-                .alloc(pages)
-                .expect("Could not allocate color buffer") as *mut u32,
-            length,
-        )
-    };
-
-    for y in 0..fb.height {
-        let r = ((y as f32) / ((fb.height - 1) as f32)) * 200.0;
-        for x in 0..fb.width {
-            let g = ((x as f32) / ((fb.width - 1) as f32)) * 200.0;
-            buffer[y * fb.width + x] = ((r as u32) << 16) | ((g as u32) << 8) | 175;
-        }
-    }
-
-    fb.blit_screen(buffer, None);
+    // as a sign that we didnt panic
+    draw_gradient();
 
     // loop {
     //     let ch = read_serial();
@@ -109,6 +89,42 @@ pub extern "C" fn _start() -> ! {
     hcf();
 }
 
+fn draw_gradient() {
+    let fb = drivers::video::get_framebuffer().unwrap();
+    let length = (fb.height * fb.width) * (fb.bpp / 8);
+    let pages = length / crate::mem::pmm::PAGE_SIZE;
+
+    let buffer_ptr = crate::mem::PHYSICAL_MEMORY_MANAGER.alloc(pages);
+
+    if buffer_ptr.is_null() {
+        panic!("Failed to allocate screen buffer")
+    }
+
+    let buffer = unsafe {
+        core::slice::from_raw_parts_mut(
+            crate::mem::PHYSICAL_MEMORY_MANAGER
+                .alloc(pages)
+                .cast::<u32>(),
+            length,
+        )
+    };
+
+    for y in 0..fb.height {
+        for x in 0..fb.width {
+            let r = (255 * x) / (fb.width - 1);
+            let g = (255 * y) / (fb.height - 1);
+            let b = 255 - r;
+
+            let pixel = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+            buffer[((y * fb.pitch) / (fb.bpp / 8)) + x] = pixel
+        }
+    }
+
+    fb.blit_screen(buffer, None);
+
+    crate::mem::PHYSICAL_MEMORY_MANAGER.dealloc(buffer_ptr, pages);
+}
+
 #[macro_export]
 macro_rules! println {
     () => ($crate::print!("\n"));
@@ -118,7 +134,6 @@ macro_rules! println {
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => (
-
         $crate::drivers::serial::write_string(&alloc::format!($($arg)*).replace('\n', "\n\r"))
     )
 }
@@ -160,6 +175,7 @@ impl KernelFeatures {
     }
 }
 
+// TODO: Do this vastly differently
 pub static KERNEL_FEATURES: libs::cell::LazyCell<KernelFeatures> =
     libs::cell::LazyCell::new(parse_kernel_cmdline);
 
@@ -207,9 +223,7 @@ fn parse_kernel_cmdline() -> KernelFeatures {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    let msg = &format!("{info}\n").replace('\n', "\n\r");
-
-    drivers::serial::write_string(msg);
+    crate::println!("{info}");
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {

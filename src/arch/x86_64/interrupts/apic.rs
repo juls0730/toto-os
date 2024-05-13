@@ -2,10 +2,7 @@ use crate::{drivers::acpi::SMP_REQUEST, hcf, libs::cell::OnceCell};
 
 use alloc::{sync::Arc, vec::Vec};
 
-use super::super::{
-    cpu_get_msr, cpu_set_msr,
-    io::{inb, outb},
-};
+use super::super::{cpu_get_msr, cpu_set_msr, io::outb};
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
@@ -107,33 +104,41 @@ impl APIC {
         let ptr_end = unsafe { ptr.add(madt.header.length as usize - 44) };
 
         while (ptr as usize) < (ptr_end as usize) {
-            match unsafe { *ptr } {
+            // ptr may or may bot be aligned, although I have had crashes related to this pointer being not aligned
+            // and tbh I dont really care about the performance impact of reading unaligned pointers right now
+            // TODO
+            match unsafe { core::ptr::read_unaligned(ptr) } {
                 0 => {
                     if unsafe { *(ptr.add(4)) } & 1 != 0 {
-                        cpus.push(unsafe { *ptr.add(2).cast::<LAPIC>() });
+                        cpus.push(unsafe { core::ptr::read_unaligned(ptr.add(2).cast::<LAPIC>()) });
                     }
                 }
                 1 => unsafe {
                     io_apic = Some(IOAPIC {
-                        ioapic_id: *ptr.add(2),
-                        _reserved: *ptr.add(3),
-                        ptr: (*ptr.add(4).cast::<u32>()) as *mut u8,
-                        global_interrupt_base: *ptr.add(8).cast::<u32>(),
+                        ioapic_id: core::ptr::read_unaligned(ptr.add(2)),
+                        _reserved: core::ptr::read_unaligned(ptr.add(3)),
+                        ptr: (core::ptr::read_unaligned(ptr.add(4).cast::<u32>())) as *mut u8,
+                        global_interrupt_base: core::ptr::read_unaligned(ptr.add(8).cast::<u32>()),
                     })
                 },
                 2 => unsafe {
                     io_apic_source_override = Some(IOAPICSourceOverride {
-                        bus_source: *ptr.add(2),
-                        irq_source: *ptr.add(3),
-                        global_system_interrupt: *ptr.add(4).cast::<u32>(),
-                        flags: *ptr.add(8).cast::<u16>(),
+                        bus_source: core::ptr::read_unaligned(ptr.add(2)),
+                        irq_source: core::ptr::read_unaligned(ptr.add(3)),
+                        global_system_interrupt: core::ptr::read_unaligned(
+                            ptr.add(4).cast::<u32>(),
+                        ),
+                        flags: core::ptr::read_unaligned(ptr.add(8).cast::<u16>()),
                     })
                 },
-                5 => lapic_ptr = unsafe { *(ptr.add(4).cast::<u64>()) } as *mut u8,
+                5 => {
+                    lapic_ptr =
+                        unsafe { core::ptr::read_unaligned(ptr.add(4).cast::<u64>()) } as *mut u8
+                }
                 _ => {}
             }
 
-            ptr = unsafe { ptr.add((*ptr.add(1)) as usize) };
+            ptr = unsafe { ptr.add(core::ptr::read_unaligned(ptr.add(1)) as usize) };
         }
 
         if io_apic.is_none() || io_apic_source_override.is_none() {
@@ -168,10 +173,6 @@ impl APIC {
 
         crate::println!("{number_of_inputs}");
 
-        // // hopefully nothing important is on that page :shrug:
-        // // TODO: use the page allocator we wrote maybe
-        // unsafe { core::ptr::copy(test as *mut u8, 0x8000 as *mut u8, 4096) }
-
         let smp_request = SMP_REQUEST.get_response().get_mut();
 
         if smp_request.is_none() {
@@ -189,81 +190,11 @@ impl APIC {
             cpu.goto_address = test;
         }
 
-        // for cpu_apic in apic.cpus.iter() {
-        //     let lapic_id = cpu_apic.apic_id;
-
-        //     // TODO: If CPU is the BSP, do not intialize it
-
-        //     crate::log_info!("Initializing CPU {processor_id:<02}, please wait",);
-
-        //     match apic.bootstrap_processor(processor_id, 0x8000) {
-        //         Err(_) => crate::log_error!("Failed to initialize CPU {processor_id:<02}!"),
-        //         Ok(_) => crate::log_ok!("Successfully initialized CPU {processor_id:<02}!"),
-        //     }
-        // }
-
         // Set and enable keyboard interrupt
         apic.set_interrupt(0x01, 0x01);
 
         return Ok(apic);
     }
-
-    // pub fn bootstrap_processor(&self, processor_id: u8, startup_page: usize) -> Result<(), ()> {
-    //     // Clear LAPIC errors
-    //     self.write_lapic(0x280, 0);
-    //     // Select Auxiliary Processor
-    //     self.write_lapic(
-    //         0x310,
-    //         (self.read_lapic(0x310) & 0x00FFFFFF) | (processor_id as u32) << 24,
-    //     );
-    //     // send INIT Inter-Processor Interrupt
-    //     self.write_lapic(0x300, (self.read_lapic(0x300) & 0x00FFFFFF) | 0x00C500);
-
-    //     // Wait for IPI delivery
-    //     while self.read_lapic(0x300) & (1 << 12) != 0 {
-    //         unsafe {
-    //             core::arch::asm!("pause");
-    //         }
-    //     }
-
-    //     // Select Auxiliary Processor
-    //     self.write_lapic(
-    //         0x310,
-    //         (self.read_lapic(0x310) & 0x00FFFFFF) | (processor_id as u32) << 24,
-    //     );
-    //     // deassert
-    //     self.write_lapic(0x300, (self.read_lapic(0x300) & 0x00FFFFFF) | 0x00C500);
-
-    //     // Wait for IPI delivery
-    //     while self.read_lapic(0x300) & (1 << 12) != 0 {
-    //         unsafe {
-    //             core::arch::asm!("pause");
-    //         }
-    //     }
-
-    //     msdelay(10);
-
-    //     for i in 0..2 {
-    //         self.write_lapic(0x280, 0);
-    //         self.write_lapic(
-    //             0x310,
-    //             (self.read_lapic(0x310) & 0x00FFFFFF) | (processor_id as u32) << 24,
-    //         );
-    //         self.write_lapic(0x300, (self.read_lapic(0x300) & 0xfff0f800) | 0x000608);
-    //         if i == 0 {
-    //             usdelay(200);
-    //         } else {
-    //             msdelay(1000);
-    //         }
-    //         while self.read_lapic(0x300) & (1 << 12) != 0 {
-    //             unsafe {
-    //                 core::arch::asm!("pause");
-    //             }
-    //         }
-    //     }
-
-    //     return Ok(());
-    // }
 
     pub fn read_ioapic(&self, reg: u32) -> u32 {
         unsafe {
@@ -336,40 +267,41 @@ fn disable_pic() {
     outb(PIC_DATA_SLAVE, 0xFF);
 }
 
-pub fn usdelay(useconds: u16) {
-    let pit_count = ((useconds as u32 * 1193) / 1000) as u16;
+// // TODO: last I remember these didnt work
+// pub fn usdelay(useconds: u16) {
+//     let pit_count = ((useconds as u32 * 1193) / 1000) as u16;
 
-    pit_delay(pit_count);
-}
+//     pit_delay(pit_count);
+// }
 
-pub fn msdelay(ms: u32) {
-    let mut total_count = ms * 1193;
+// pub fn msdelay(ms: u32) {
+//     let mut total_count = ms * 1193;
 
-    while total_count > 0 {
-        let chunk_count = if total_count > u16::MAX as u32 {
-            u16::MAX
-        } else {
-            total_count as u16
-        };
+//     while total_count > 0 {
+//         let chunk_count = if total_count > u16::MAX as u32 {
+//             u16::MAX
+//         } else {
+//             total_count as u16
+//         };
 
-        pit_delay(chunk_count);
+//         pit_delay(chunk_count);
 
-        total_count -= chunk_count as u32;
-    }
-}
+//         total_count -= chunk_count as u32;
+//     }
+// }
 
-pub fn pit_delay(count: u16) {
-    // Set PIT to mode 0
-    outb(0x43, 0x30);
-    outb(0x40, (count & 0xFF) as u8);
-    outb(0x40, ((count & 0xFF00) >> 8) as u8);
-    loop {
-        // Tell PIT to give us a timer status
-        outb(0x43, 0xE2);
-        if ((inb(0x40) >> 7) & 0x01) != 0 {
-            break;
-        }
-    }
-}
+// pub fn pit_delay(count: u16) {
+//     // Set PIT to mode 0
+//     outb(0x43, 0x30);
+//     outb(0x40, (count & 0xFF) as u8);
+//     outb(0x40, ((count & 0xFF00) >> 8) as u8);
+//     loop {
+//         // Tell PIT to give us a timer status
+//         outb(0x43, 0xE2);
+//         if ((inb(0x40) >> 7) & 0x01) != 0 {
+//             break;
+//         }
+//     }
+// }
 
 pub static APIC: OnceCell<APIC> = OnceCell::new();

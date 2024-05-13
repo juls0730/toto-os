@@ -19,6 +19,12 @@ pub static POISONED: AtomicBool = AtomicBool::new(false);
 // PORT + 4: Modem control register
 #[cfg(target_arch = "x86_64")]
 pub fn init_serial() -> u8 {
+    outb(PORT + 7, 0x42);
+    if inb(PORT + 7) != 0x42 {
+        // serial port does not exist
+        return 1;
+    }
+
     outb(PORT + 1, 0x00);
     outb(PORT + 3, 0x80);
     outb(PORT, 0x03);
@@ -31,14 +37,12 @@ pub fn init_serial() -> u8 {
 
     // Check if serial is faulty
     if inb(PORT) != 0xAE {
-        crate::log_error!("Serial Driver failed to initialize");
         POISONED.store(true, core::sync::atomic::Ordering::Relaxed);
         return 1;
     }
 
     // Set serial in normal operation mode
     outb(PORT + 4, 0x0F);
-    crate::log_ok!("Serial Driver successfully initialized");
     return 0;
 }
 
@@ -52,19 +56,19 @@ pub fn write_string(string: &str) {
     #[cfg(not(target_arch = "x86_64"))]
     {
         for &ch in string.as_bytes() {
-            write_serial(ch as char);
+            write_serial(ch);
         }
     }
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub fn init_serial() -> u8 {
-    return 0;
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn is_transmit_empty() -> bool {
     return inb((PORT + 5) & 0x20) == 0;
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub fn init_serial() -> u8 {
+    return 0;
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

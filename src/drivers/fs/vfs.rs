@@ -1,81 +1,23 @@
-// use alloc::{
-//     boxed::Box,
-//     string::{String, ToString},
-//     sync::Arc,
-//     vec::Vec,
-// };
-
-// use crate::{drivers::pci::PCI_DEVICES, libs::sync::Mutex};
-
-// pub trait VfsFileSystem {
-//     fn open(&self, path: &str) -> Result<Box<dyn VfsFile + '_>, ()>;
-//     fn read_dir(&self, path: &str) -> Result<Box<dyn VfsDirectory>, ()>;
-// }
-
-// pub trait VfsFile {
-//     fn read(&self) -> Result<Arc<[u8]>, ()>;
-// }
-
-// pub trait VfsDirectory {
-//     fn list_files(&self) -> Result<Arc<[Box<dyn VfsFile>]>, ()>;
-// }
-
-// pub static VFS_INSTANCES: Mutex<Vec<Vfs>> = Mutex::new(Vec::new());
-
-// pub struct Vfs {
-//     _identifier: String,
-//     file_system: Box<dyn VfsFileSystem>,
-// }
-
-// impl Vfs {
-//     pub fn new(file_system: Box<dyn VfsFileSystem>, identifier: &str) -> Self {
-//         return Self {
-//             _identifier: identifier.to_string(),
-//             file_system,
-//         };
-//     }
-
-//     pub fn open(&self, path: &str) -> Result<Box<dyn VfsFile + '_>, ()> {
-//         return self.file_system.open(path);
-//     }
-
-//     pub fn read_dir(&self, path: &str) -> Result<Box<dyn VfsDirectory>, ()> {
-//         return self.file_system.read_dir(path);
-//     }
-// }
-
-// pub fn init() {
-//     // TODO: Deduce which storage medium(s) we're using
-//     let pci_devices_lock = PCI_DEVICES.lock();
-//     let mass_storage_devices = pci_devices_lock
-//         .iter()
-//         .filter(|&pci_device| pci_device.class_code == 0x01)
-//         .collect::<Vec<_>>();
-
-//     for pci_device in mass_storage_devices {
-//         match pci_device.subclass_code {
-//             0x01 => crate::drivers::storage::ide::init(),
-//             _ => {}
-//         }
-//     }
-// }
-
 use core::fmt::Debug;
 
 use alloc::{
-    alloc::{alloc, handle_alloc_error},
+    alloc::{alloc, dealloc},
     boxed::Box,
     sync::Arc,
     vec::Vec,
 };
 
 use crate::{
-    log_info,
-    mem::{ALLOCATOR, PHYSICAL_MEMORY_MANAGER},
+    log_info, log_ok,
+    mem::{
+        // ALLOCATOR,
+        PHYSICAL_MEMORY_MANAGER,
+    },
 };
 
 static mut ROOT_VFS: Vfs = Vfs::null();
 
+#[allow(unused)]
 pub struct Vfs {
     next: Option<*mut Vfs>,
     ops: Option<Box<dyn FsOps>>,
@@ -121,11 +63,13 @@ pub trait FsOps {
     fn vget(&mut self, fid: FileId, vfsp: *const Vfs) -> VNode;
 }
 
+#[allow(unused)]
 pub struct FileId {
     len: u16,
     data: u8,
 }
 
+#[allow(unused)]
 pub struct StatFs {
     typ: u32,
     block_size: u32,
@@ -192,11 +136,13 @@ pub enum IODirection {
     Write,
 }
 
+#[allow(unused)]
 pub struct IoVec {
     iov_base: *mut u8,
     iov_len: usize,
 }
 
+#[allow(unused)]
 pub struct UIO {
     iov: *mut IoVec,
     iov_count: u32,
@@ -260,6 +206,7 @@ pub trait VNodeOperations {
     fn bread(&mut self, block_number: u32, vp: *const VNode) -> Arc<[u8]>;
 }
 
+#[allow(unused)]
 pub struct VAttr {
     typ: VNode,
     mode: u16,
@@ -281,11 +228,9 @@ pub struct VAttr {
 
 pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
     let layout = alloc::alloc::Layout::new::<Vfs>();
-    // TODO: investigate why on earth this gives me an allocation error
-    // let vfs = unsafe { alloc(layout).cast::<Vfs>() };
-    let vfs = PHYSICAL_MEMORY_MANAGER.alloc(1).unwrap().cast::<Vfs>();
+    let vfs_ptr = unsafe { alloc(layout).cast::<Vfs>() };
 
-    let vfs = unsafe { &mut *vfs };
+    let vfs = unsafe { &mut *vfs_ptr };
 
     (*vfs) = Vfs::null();
     (*vfs).ops = Some(fs_ops);
@@ -308,58 +253,67 @@ pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
         }
 
         unsafe { ROOT_VFS.next = Some(vfs.as_mut_ptr()) };
+    } else {
+        if unsafe { ROOT_VFS.next.is_none() } {
+            unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+            return Err(());
+        }
 
-        return Ok(());
+        let target_vfs = unsafe { ROOT_VFS.next.unwrap() };
+
+        let mut cur_vnode = unsafe { (*target_vfs).ops.as_mut().unwrap().root(target_vfs) };
+
+        let parts = mount_point.split('/').collect::<Vec<&str>>();
+
+        for part in parts {
+            if part.is_empty() {
+                continue;
+            }
+
+            // TODO: dont just lookup everything as the root user
+            if let Ok(vnode) =
+                cur_vnode
+                    .ops
+                    .lookup(part, UserCred { uid: 0, gid: 0 }, cur_vnode.as_ptr())
+            {
+                cur_vnode = vnode;
+            } else {
+                unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+                return Err(());
+            }
+        }
+
+        if cur_vnode.vfs_mounted_here.is_some() {
+            unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+            return Err(());
+        }
+
+        {
+            let vfsp = vfs.as_ptr();
+
+            (*vfs)
+                .ops
+                .as_mut()
+                .unwrap()
+                .mount(mount_point, &mut vfs.data, vfsp);
+        }
+
+        cur_vnode.vfs_mounted_here = Some(vfs.as_mut_ptr());
     }
 
+    log_ok!("Added vfs at {mount_point}");
+
+    return Ok(());
+}
+
+pub fn vfs_open(path: &str) -> Result<VNode, ()> {
     if unsafe { ROOT_VFS.next.is_none() } {
         return Err(());
     }
 
-    let target_vfs = unsafe { ROOT_VFS.next.unwrap() };
-
-    let binding = unsafe { &mut (*target_vfs).ops };
-    let mut cur_vnode = binding.as_mut().unwrap().root(target_vfs);
-
-    let parts = mount_point.split('/').collect::<Vec<&str>>();
-
-    for part in parts {
-        // TODO: dont just lookup everything as the root user
-        if let Ok(vnode) =
-            cur_vnode
-                .ops
-                .lookup(part, UserCred { uid: 0, gid: 0 }, cur_vnode.as_ptr())
-        {
-            cur_vnode = vnode;
-        } else {
-            return Err(());
-        }
-    }
-
-    if cur_vnode.vfs_mounted_here.is_some() {
-        return Err(());
-    }
-
-    {
-        let vfsp = vfs.as_ptr();
-
-        (*vfs)
-            .ops
-            .as_mut()
-            .unwrap()
-            .mount(mount_point, &mut vfs.data, vfsp);
-    }
-
-    cur_vnode.vfs_mounted_here = Some(vfs.as_mut_ptr());
-
-    return Err(());
-}
-
-pub fn vfs_open(path: &str) -> Result<VNode, ()> {
     let parts = path.split('/').collect::<Vec<&str>>();
     let target_vfs = unsafe { ROOT_VFS.next.unwrap() };
-    let binding = unsafe { &mut (*target_vfs).ops };
-    let mut cur_vnode = binding.as_mut().unwrap().root(target_vfs);
+    let mut cur_vnode = unsafe { (*target_vfs).ops.as_mut().unwrap().root(target_vfs) };
 
     for part in parts {
         if part.is_empty() {
@@ -371,7 +325,11 @@ pub fn vfs_open(path: &str) -> Result<VNode, ()> {
                 .ops
                 .lookup(part, UserCred { uid: 0, gid: 0 }, cur_vnode.as_ptr())
         {
-            cur_vnode = vnode;
+            if let Some(vfs) = vnode.vfs_mounted_here {
+                cur_vnode = unsafe { (*vfs).ops.as_mut().unwrap().root(vfs) }
+            } else {
+                cur_vnode = vnode;
+            }
         } else {
             return Err(());
         }

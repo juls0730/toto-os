@@ -6,6 +6,7 @@ pub enum DeviceType {
     BlockDevice = 1,
 }
 
+#[allow(unused)]
 pub struct Device {
     typ: DeviceType,
     block_size: usize,

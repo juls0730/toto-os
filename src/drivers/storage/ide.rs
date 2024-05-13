@@ -1,6 +1,6 @@
 use core::mem::size_of;
 
-use alloc::{boxed::Box, format, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
     arch::io::{inb, insw, inw, outb, outsw},
@@ -690,7 +690,8 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
 
                     let fat_fs = fat_fs.unwrap();
 
-                    add_vfs("/", Box::new(fat_fs));
+                    // TODO
+                    let _ = add_vfs("/", Box::new(fat_fs));
 
                     // let vfs = crate::drivers::fs::vfs::Vfs::new(
                     //     Box::new(fat_fs),

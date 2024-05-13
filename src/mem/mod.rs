@@ -1,65 +1,24 @@
 pub mod allocator;
 pub mod pmm;
 
-use core::alloc::GlobalAlloc;
+use crate::libs::{cell::OnceCell, sync::Mutex};
 
-use limine::{MemmapEntry, NonNullPtr};
-
-use crate::libs::{cell::LazyCell, sync::Mutex};
-
-use self::{allocator::BuddyAllocator, pmm::PhysicalMemoryManager};
+use self::{allocator::LinkedListAllocator, pmm::PhysicalMemoryManager};
 
 static MEMMAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0);
 static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
 
-pub static MEMMAP: LazyCell<Mutex<&mut [NonNullPtr<MemmapEntry>]>> = LazyCell::new(|| {
-    let memmap_request = MEMMAP_REQUEST
-        .get_response()
-        .get_mut()
-        .expect("Failed to get Memory map!");
+pub static PHYSICAL_MEMORY_MANAGER: OnceCell<PhysicalMemoryManager> = OnceCell::new();
 
-    return Mutex::new(memmap_request.memmap_mut());
-});
-
-pub static HHDM_OFFSET: LazyCell<usize> = LazyCell::new(|| {
-    let hhdm = HHDM_REQUEST
-        .get_response()
-        .get()
-        .expect("Failed to get Higher Half Direct Map!");
-
-    return hhdm.offset as usize;
-});
-
-pub static PHYSICAL_MEMORY_MANAGER: LazyCell<PhysicalMemoryManager> =
-    LazyCell::new(PhysicalMemoryManager::new);
-
-pub struct Allocator {
-    pub inner: LazyCell<BuddyAllocator>,
+pub fn align_up(addr: usize, align: usize) -> usize {
+    let offset = (addr as *const u8).align_offset(align);
+    addr + offset
 }
 
-unsafe impl GlobalAlloc for Allocator {
-    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        self.inner.alloc(layout)
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-        self.inner.dealloc(ptr, layout)
-    }
-}
-
-const HEAP_PAGES: usize = 4096;
-const HEAP_SIZE: usize = HEAP_PAGES * 1024;
+const HEAP_PAGES: usize = 1024; // 4 MiB heap
 
 #[global_allocator]
-pub static ALLOCATOR: Allocator = Allocator {
-    inner: LazyCell::new(|| {
-        let heap_start = PHYSICAL_MEMORY_MANAGER
-            .alloc(HEAP_PAGES)
-            .expect("Failed to allocate heap!");
-
-        BuddyAllocator::new_unchecked(heap_start, HEAP_SIZE)
-    }),
-};
+pub static ALLOCATOR: Mutex<LinkedListAllocator> = Mutex::new(LinkedListAllocator::new());
 
 pub fn log_memory_map() {
     let memmap_request = MEMMAP_REQUEST.get_response().get_mut();
@@ -82,20 +41,43 @@ pub fn log_memory_map() {
     }
 }
 
-pub struct Label {
-    size: usize,
-    text_label: &'static str,
+pub fn init_allocator() {
+    let mut allocator_lock = ALLOCATOR.lock();
+    allocator_lock.init(HEAP_PAGES);
+
+    drop(allocator_lock);
+
+    crate::println!(
+        "{} of memory available",
+        PHYSICAL_MEMORY_MANAGER.total_memory().label_bytes()
+    )
+}
+
+pub enum Label {
+    BYTE(usize),
+    KIB(usize),
+    MIB(usize),
+    GIB(usize),
 }
 
 impl core::fmt::Display for Label {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        return write!(f, "{}{}", self.size, self.text_label);
+        match self {
+            Label::BYTE(count) => {
+                write!(f, "{count} Byte(s)")
+            }
+            Label::KIB(count) => {
+                write!(f, "{count} KiB(s)")
+            }
+            Label::MIB(count) => {
+                write!(f, "{count} MiB(s)")
+            }
+            Label::GIB(count) => {
+                write!(f, "{count} GiB(s)")
+            }
+        }
     }
 }
-
-// Hacky solution to avoid allocation, but keep the names
-static BYTE_LABELS: (&str, &str, &str, &str) = ("GiB", "MiB", "KiB", "Bytes");
-
 pub trait LabelBytes {
     fn label_bytes(&self) -> Label;
 }
@@ -105,25 +87,13 @@ impl LabelBytes for usize {
         let bytes = *self;
 
         if bytes >> 30 > 0 {
-            return Label {
-                size: bytes >> 30,
-                text_label: BYTE_LABELS.0,
-            };
+            return Label::GIB(bytes >> 30);
         } else if bytes >> 20 > 0 {
-            return Label {
-                size: bytes >> 20,
-                text_label: BYTE_LABELS.1,
-            };
+            return Label::MIB(bytes >> 20);
         } else if bytes >> 10 > 0 {
-            return Label {
-                size: bytes >> 10,
-                text_label: BYTE_LABELS.2,
-            };
+            return Label::KIB(bytes >> 10);
         } else {
-            return Label {
-                size: bytes,
-                text_label: BYTE_LABELS.3,
-            };
+            return Label::BYTE(bytes);
         }
     }
 }

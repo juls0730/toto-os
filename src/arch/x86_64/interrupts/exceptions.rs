@@ -107,7 +107,7 @@ exception_function!(0x0D, general_protection_fault);
 exception_function!(0x0E, page_fault);
 exception_function!(0xFF, generic_handler);
 
-pub fn set_exceptions() {
+pub fn exceptions_init() {
     for i in 0..32 {
         idt_set_gate(i, generic_handler as usize);
     }

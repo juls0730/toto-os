@@ -4,12 +4,12 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-pub struct Mutex<T: ?Sized> {
+pub struct Mutex<T> {
     locked: AtomicBool,
     data: UnsafeCell<T>,
 }
 
-unsafe impl<T: ?Sized> Sync for Mutex<T> {}
+unsafe impl<T> Sync for Mutex<T> {}
 
 impl<T> Mutex<T> {
     #[inline]
@@ -21,10 +21,11 @@ impl<T> Mutex<T> {
     }
 
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        // if self.locked.load(Ordering::Acquire) == true {
-        //     unsafe { core::arch::asm!("out dx, al", in("dx") 0x3f8, in("al") 'S' as u8) };
-        // }
-        while self.locked.swap(true, Ordering::Acquire) {
+        while self
+            .locked
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             // spin lock
         }
         return MutexGuard { mutex: self };
@@ -44,29 +45,26 @@ impl<T> core::fmt::Debug for Mutex<T> {
     }
 }
 
-pub struct MutexGuard<'a, T: ?Sized> {
+pub struct MutexGuard<'a, T> {
     mutex: &'a Mutex<T>,
 }
 
-impl<'a, T: ?Sized> Deref for MutexGuard<'a, T> {
+impl<'a, T> Deref for MutexGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        // unsafe { core::arch::asm!("out dx, al", in("dx") 0x3f8, in("al") 'D' as u8) };
-
         unsafe { &*self.mutex.data.get() }
     }
 }
 
-impl<'a, T: ?Sized> DerefMut for MutexGuard<'a, T> {
+impl<'a, T> DerefMut for MutexGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
-        // unsafe { core::arch::asm!("out dx, al", in("dx") 0x3f8, in("al") 'M' as u8) };
         unsafe { &mut *self.mutex.data.get() }
     }
 }
 
-impl<'a, T: ?Sized> Drop for MutexGuard<'a, T> {
+impl<'a, T> Drop for MutexGuard<'a, T> {
     fn drop(&mut self) {
-        self.mutex.locked.store(false, Ordering::Release);
+        self.mutex.locked.store(false, Ordering::SeqCst);
     }
 }
