@@ -45,20 +45,20 @@ pub fn kmain() -> ! {
 
     let mut file = vfs_open("/firstdir/seconddirbutlonger/yeah.txt").unwrap();
 
-    // drivers::storage::ide::init();
+    drivers::storage::ide::init();
 
-    // let nested_file = vfs_open("/boot/limine/limine.cfg").unwrap();
+    let mut nested_file = vfs_open("/mnt/boot/limine/limine.cfg").unwrap();
 
-    // crate::println!(
-    //     "{:X?}",
-    //     nested_file
-    //         .ops
-    //         .open(0, UserCred { uid: 0, gid: 0 }, nested_file.as_ptr())
-    // );
+    crate::println!(
+        "LIMINE BOOT: {:X?}",
+        nested_file
+            .ops
+            .open(0, UserCred { uid: 0, gid: 0 }, nested_file.as_ptr())
+    );
 
     // let file = vfs_open("/example.txt").unwrap();
     crate::println!(
-        "{:X?}",
+        "YEAH.TXT: {:X?}",
         &file
             .ops
             .open(0, UserCred { uid: 0, gid: 0 }, file.as_ptr())

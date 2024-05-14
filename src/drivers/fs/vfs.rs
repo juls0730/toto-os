@@ -1,27 +1,23 @@
 use core::fmt::Debug;
 
 use alloc::{
-    alloc::{alloc, dealloc},
+    // alloc::{alloc, dealloc},
     boxed::Box,
+    string::{String, ToString},
     sync::Arc,
     vec::Vec,
 };
 
-use crate::{
-    log_info, log_ok,
-    mem::{
-        // ALLOCATOR,
-        PHYSICAL_MEMORY_MANAGER,
-    },
-};
+use crate::{log_info, log_ok, mem::PHYSICAL_MEMORY_MANAGER};
 
 static mut ROOT_VFS: Vfs = Vfs::null();
 
 #[allow(unused)]
 pub struct Vfs {
+    mount_point: Option<String>,
     next: Option<*mut Vfs>,
     ops: Option<Box<dyn FsOps>>,
-    vnode_covered: Option<*const VNode>,
+    // vnode_covered: Option<*const VNode>,
     flags: u32,
     block_size: u32,
     pub data: *mut u8,
@@ -32,9 +28,10 @@ unsafe impl Sync for Vfs {}
 impl Vfs {
     const fn null() -> Self {
         return Vfs {
+            mount_point: None,
             next: None,
             ops: None,
-            vnode_covered: None,
+            // vnode_covered: None,
             flags: 0,
             block_size: 0,
             data: core::ptr::null_mut(),
@@ -100,7 +97,6 @@ pub struct VNode {
     pub ref_count: u16,
     pub shared_lock_count: u16,
     pub exclusive_lock_count: u16,
-    pub vfs_mounted_here: Option<*mut Vfs>,
     pub ops: Box<dyn VNodeOperations>,
     pub node_data: Option<NodeData>,
     pub parent: *const Vfs,
@@ -226,19 +222,56 @@ pub struct VAttr {
     used_blocks: u32,
 }
 
-pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
-    let layout = alloc::alloc::Layout::new::<Vfs>();
-    let vfs_ptr = unsafe { alloc(layout).cast::<Vfs>() };
+unsafe fn find_mount_point(file_path: &str) -> Option<*mut Vfs> {
+    // TODO: refactor
+    let mut mount_point = ROOT_VFS.next;
+    let mut current = ROOT_VFS.next;
+
+    while let Some(node) = current {
+        let mount_point_str = node
+            .as_ref()
+            .unwrap()
+            .mount_point
+            .as_ref()
+            .expect("Null mount point");
+        if file_path.starts_with(mount_point_str)
+            && mount_point_str.len()
+                > (mount_point.unwrap().as_ref().unwrap())
+                    .mount_point
+                    .as_ref()
+                    .unwrap()
+                    .len()
+        {
+            mount_point = Some(node);
+        }
+        current = unsafe { (*node).next };
+    }
+
+    mount_point
+}
+
+pub fn add_vfs(mut mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
+    if mount_point != "/" {
+        mount_point = mount_point.trim_end_matches('/');
+    }
+
+    // let layout = alloc::alloc::Layout::new::<Vfs>();
+    // TODO: its fucking broken again
+    let vfs_ptr = PHYSICAL_MEMORY_MANAGER.alloc(1).cast::<Vfs>();
 
     let vfs = unsafe { &mut *vfs_ptr };
 
     (*vfs) = Vfs::null();
     (*vfs).ops = Some(fs_ops);
+    (*vfs).mount_point = Some(mount_point.to_string());
 
-    log_info!("Adding vfs at {mount_point}");
+    log_info!("Adding vfs at {mount_point} {vfs_ptr:p}");
 
+    // TODO: dont give / special treatment
     if mount_point == "/" {
         if unsafe { ROOT_VFS.next.is_some() } {
+            // unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+            PHYSICAL_MEMORY_MANAGER.dealloc(vfs_ptr.cast::<u8>(), 1);
             return Err(());
         }
 
@@ -254,37 +287,35 @@ pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
 
         unsafe { ROOT_VFS.next = Some(vfs.as_mut_ptr()) };
     } else {
+        // TODO: technically this allows you to mount file systems at nonexistent mount point
         if unsafe { ROOT_VFS.next.is_none() } {
-            unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+            // unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+            PHYSICAL_MEMORY_MANAGER.dealloc(vfs_ptr.cast::<u8>(), 1);
             return Err(());
         }
 
-        let target_vfs = unsafe { ROOT_VFS.next.unwrap() };
+        // let target_vfs = unsafe { ROOT_VFS.next.unwrap() };
 
-        let mut cur_vnode = unsafe { (*target_vfs).ops.as_mut().unwrap().root(target_vfs) };
+        let mut next_vfs = unsafe { ROOT_VFS.next };
 
-        let parts = mount_point.split('/').collect::<Vec<&str>>();
-
-        for part in parts {
-            if part.is_empty() {
-                continue;
-            }
-
-            // TODO: dont just lookup everything as the root user
-            if let Ok(vnode) =
-                cur_vnode
-                    .ops
-                    .lookup(part, UserCred { uid: 0, gid: 0 }, cur_vnode.as_ptr())
+        while let Some(target_vfs) = next_vfs {
+            if unsafe { target_vfs.as_ref().unwrap().mount_point.as_ref().unwrap() == mount_point }
             {
-                cur_vnode = vnode;
-            } else {
-                unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+                // unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+                PHYSICAL_MEMORY_MANAGER.dealloc(vfs_ptr.cast::<u8>(), 1);
                 return Err(());
             }
+
+            if unsafe { (*target_vfs).next }.is_none() {
+                break;
+            }
+
+            next_vfs = unsafe { (*target_vfs).next };
         }
 
-        if cur_vnode.vfs_mounted_here.is_some() {
-            unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+        if next_vfs.is_none() {
+            // unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+            PHYSICAL_MEMORY_MANAGER.dealloc(vfs_ptr.cast::<u8>(), 1);
             return Err(());
         }
 
@@ -298,7 +329,41 @@ pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
                 .mount(mount_point, &mut vfs.data, vfsp);
         }
 
-        cur_vnode.vfs_mounted_here = Some(vfs.as_mut_ptr());
+        unsafe { (*(next_vfs.unwrap())).next = Some(vfs) };
+
+        // let mut cur_vnode = unsafe { (*target_vfs).ops.as_mut().unwrap().root(target_vfs) };
+
+        // let parts = mount_point.split('/').collect::<Vec<&str>>();
+
+        // for part in parts {
+        //     if part.is_empty() {
+        //         continue;
+        //     }
+
+        //     // TODO: dont just lookup everything as the root user
+        //     if let Ok(vnode) =
+        //         cur_vnode
+        //             .ops
+        //             .lookup(part, UserCred { uid: 0, gid: 0 }, cur_vnode.as_ptr())
+        //     {
+        //         cur_vnode = vnode;
+        //     } else {
+        //         unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+        //         return Err(());
+        //     }
+        // }
+
+        // if cur_vnode.vfs_mounted_here.is_some() {
+        //     unsafe { dealloc(vfs_ptr.cast::<u8>(), layout) };
+        //     return Err(());
+        // }
+
+        // {
+        //     let vfsp = vfs.as_ptr();
+
+        // }
+
+        // cur_vnode.vfs_mounted_here = Some(vfs.as_mut_ptr());
     }
 
     log_ok!("Added vfs at {mount_point}");
@@ -311,9 +376,23 @@ pub fn vfs_open(path: &str) -> Result<VNode, ()> {
         return Err(());
     }
 
+    let root_vfs = unsafe { find_mount_point(path) };
+
+    if root_vfs.is_none() {
+        return Err(());
+    }
+
+    let mut cur_vnode = unsafe {
+        (*root_vfs.unwrap())
+            .ops
+            .as_mut()
+            .unwrap()
+            .root(root_vfs.unwrap())
+    };
+
+    let path = &path[unsafe { (*root_vfs.unwrap()).mount_point.as_ref().unwrap() }.len()..];
+
     let parts = path.split('/').collect::<Vec<&str>>();
-    let target_vfs = unsafe { ROOT_VFS.next.unwrap() };
-    let mut cur_vnode = unsafe { (*target_vfs).ops.as_mut().unwrap().root(target_vfs) };
 
     for part in parts {
         if part.is_empty() {
@@ -325,11 +404,7 @@ pub fn vfs_open(path: &str) -> Result<VNode, ()> {
                 .ops
                 .lookup(part, UserCred { uid: 0, gid: 0 }, cur_vnode.as_ptr())
         {
-            if let Some(vfs) = vnode.vfs_mounted_here {
-                cur_vnode = unsafe { (*vfs).ops.as_mut().unwrap().root(vfs) }
-            } else {
-                cur_vnode = vnode;
-            }
+            cur_vnode = vnode;
         } else {
             return Err(());
         }

@@ -432,6 +432,10 @@ impl FatFs {
     }
 
     fn cluster_to_sector(&self, cluster: usize) -> usize {
+        crate::println!("bytes per sector: {}", unsafe {
+            core::ptr::read_unaligned(core::ptr::addr_of!(self.bpb.bytes_per_sector))
+        });
+
         let fat_size = self.sectors_per_fat;
         let root_dir_sectors = ((self.bpb.root_directory_count * 32)
             + (self.bpb.bytes_per_sector - 1))
@@ -539,7 +543,6 @@ impl FsOps for FatFs {
             ref_count: 0,
             shared_lock_count: 0,
             exclusive_lock_count: 0,
-            vfs_mounted_here: None,
             ops: Box::new(file),
             node_data: None,
             parent: vfsp,
@@ -668,7 +671,6 @@ impl<'a> VNodeOperations for File {
                     ref_count: 0,
                     shared_lock_count: 0,
                     exclusive_lock_count: 0,
-                    vfs_mounted_here: None,
                     ops: Box::new(file),
                     node_data: None,
                     parent: (*vp).parent,

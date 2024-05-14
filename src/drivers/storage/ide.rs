@@ -691,7 +691,7 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
                     let fat_fs = fat_fs.unwrap();
 
                     // TODO
-                    let _ = add_vfs("/", Box::new(fat_fs));
+                    let _ = add_vfs("/mnt", Box::new(fat_fs));
 
                     // let vfs = crate::drivers::fs::vfs::Vfs::new(
                     //     Box::new(fat_fs),
