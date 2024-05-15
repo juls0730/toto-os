@@ -1,4 +1,4 @@
-use crate::{drivers::acpi::SMP_REQUEST, hcf, libs::cell::OnceCell};
+use crate::{drivers::acpi::SMP_REQUEST, hcf, libs::cell::OnceCell, mem::HHDM_OFFSET};
 
 use alloc::{sync::Arc, vec::Vec};
 
@@ -96,7 +96,7 @@ impl APIC {
 
         crate::log_info!("MADT located at: {:p}", core::ptr::addr_of!(madt));
 
-        let mut lapic_ptr = madt.inner.local_apic_address as *mut u8;
+        let mut lapic_ptr = (madt.inner.local_apic_address as usize + *HHDM_OFFSET) as *mut u8;
         let mut io_apic = None;
         let mut io_apic_source_override = None;
 
@@ -117,7 +117,8 @@ impl APIC {
                     io_apic = Some(IOAPIC {
                         ioapic_id: core::ptr::read_unaligned(ptr.add(2)),
                         _reserved: core::ptr::read_unaligned(ptr.add(3)),
-                        ptr: (core::ptr::read_unaligned(ptr.add(4).cast::<u32>())) as *mut u8,
+                        ptr: (core::ptr::read_unaligned(ptr.add(4).cast::<u32>()) as usize
+                            + *HHDM_OFFSET) as *mut u8,
                         global_interrupt_base: core::ptr::read_unaligned(ptr.add(8).cast::<u32>()),
                     })
                 },
@@ -132,8 +133,9 @@ impl APIC {
                     })
                 },
                 5 => {
-                    lapic_ptr =
-                        unsafe { core::ptr::read_unaligned(ptr.add(4).cast::<u64>()) } as *mut u8
+                    lapic_ptr = (unsafe { core::ptr::read_unaligned(ptr.add(4).cast::<u64>()) }
+                        as usize
+                        + *HHDM_OFFSET) as *mut u8
                 }
                 _ => {}
             }

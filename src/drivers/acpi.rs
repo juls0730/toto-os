@@ -4,6 +4,7 @@ use limine::SmpRequest;
 use crate::{
     arch::io::{inw, outb},
     libs::cell::OnceCell,
+    mem::HHDM_OFFSET,
 };
 
 pub static SMP_REQUEST: SmpRequest = SmpRequest::new(0);
@@ -31,7 +32,9 @@ pub struct SDT<'a, T> {
 }
 
 impl<'a, T> SDT<'a, T> {
-    unsafe fn new(ptr: *const u8) -> Self {
+    unsafe fn new(mut ptr: *const u8) -> Self {
+        ptr = ptr.add(*HHDM_OFFSET);
+
         let length = core::ptr::read_unaligned(ptr.add(4).cast::<u32>());
         let data = core::slice::from_raw_parts(ptr, length as usize);
 
