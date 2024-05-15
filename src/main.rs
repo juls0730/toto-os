@@ -1,4 +1,4 @@
-#![feature(abi_x86_interrupt, naked_functions, const_mut_refs)]
+#![feature(allocator_api, abi_x86_interrupt, naked_functions, const_mut_refs)]
 #![allow(clippy::needless_return)]
 #![no_std]
 #![no_main]
@@ -7,6 +7,7 @@ use core::ffi::CStr;
 
 use alloc::vec::Vec;
 use limine::KernelFileRequest;
+use mem::HHDM_OFFSET;
 
 use crate::drivers::fs::{
     initramfs,
@@ -45,6 +46,14 @@ pub fn kmain() -> ! {
 
     let mut file = vfs_open("/firstdir/seconddirbutlonger/yeah.txt").unwrap();
 
+    crate::println!(
+        "YEAH.TXT: {:X?}",
+        &file
+            .ops
+            .open(0, UserCred { uid: 0, gid: 0 }, file.as_ptr())
+            .unwrap()
+    );
+
     drivers::storage::ide::init();
 
     let mut nested_file = vfs_open("/mnt/boot/limine/limine.cfg").unwrap();
@@ -57,13 +66,6 @@ pub fn kmain() -> ! {
     );
 
     // let file = vfs_open("/example.txt").unwrap();
-    crate::println!(
-        "YEAH.TXT: {:X?}",
-        &file
-            .ops
-            .open(0, UserCred { uid: 0, gid: 0 }, file.as_ptr())
-            .unwrap()
-    );
 
     // as a sign that we didnt panic
     draw_gradient();

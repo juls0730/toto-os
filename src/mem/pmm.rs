@@ -2,7 +2,7 @@
 
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
-use super::{HHDM_REQUEST, MEMMAP_REQUEST};
+use super::{HHDM_OFFSET, HHDM_REQUEST, MEMMAP_REQUEST};
 
 pub const PAGE_SIZE: usize = 4096;
 
@@ -35,6 +35,8 @@ impl PhysicalMemoryManager {
             .expect("Failed to get Higher Half Direct Map!");
 
         let hhdm_offset = hhdm_req.offset as usize;
+
+        HHDM_OFFSET.set(hhdm_offset);
 
         let memmap = MEMMAP_REQUEST
             .get_response()

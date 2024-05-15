@@ -5,7 +5,7 @@ use core::{
 
 use crate::{libs::sync::Mutex, mem::pmm::PAGE_SIZE};
 
-use super::align_up;
+use super::{align_up, HHDM_OFFSET};
 
 #[derive(Debug)]
 struct MemNode {
@@ -47,7 +47,9 @@ impl LinkedListAllocator {
     pub fn init(&mut self, pages: usize) {
         unsafe {
             self.add_free_region(
-                super::PHYSICAL_MEMORY_MANAGER.alloc(pages),
+                super::PHYSICAL_MEMORY_MANAGER
+                    .alloc(pages)
+                    .add(*HHDM_OFFSET),
                 PAGE_SIZE * pages,
             );
         }

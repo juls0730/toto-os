@@ -7,6 +7,7 @@ use self::{allocator::LinkedListAllocator, pmm::PhysicalMemoryManager};
 
 static MEMMAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0);
 static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
+pub static HHDM_OFFSET: OnceCell<usize> = OnceCell::new();
 
 pub static PHYSICAL_MEMORY_MANAGER: OnceCell<PhysicalMemoryManager> = OnceCell::new();
 
@@ -15,7 +16,7 @@ pub fn align_up(addr: usize, align: usize) -> usize {
     addr + offset
 }
 
-const HEAP_PAGES: usize = 4096; // 8 MiB heap
+const HEAP_PAGES: usize = 1024; // 4 MiB heap
 
 #[global_allocator]
 pub static ALLOCATOR: Mutex<LinkedListAllocator> = Mutex::new(LinkedListAllocator::new());

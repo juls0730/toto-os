@@ -16,7 +16,7 @@ pub fn print_stack_trace(max_frames: usize, rbp: u64) {
 
     crate::println!("Stack Trace:");
     for _frame in 0..max_frames {
-        if stackframe.is_null() || unsafe { (*stackframe).back.is_null() } {
+        if stackframe.is_null() || unsafe { core::ptr::read_unaligned(stackframe).back.is_null() } {
             break;
         }
 
