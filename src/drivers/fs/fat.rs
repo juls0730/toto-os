@@ -534,17 +534,7 @@ impl FsOps for FatFs {
             directory_cluster: root_cluster,
         });
 
-        return super::vfs::VNode {
-            flags: 0,
-            ref_count: 0,
-            shared_lock_count: 0,
-            exclusive_lock_count: 0,
-            ops: Box::new(file),
-            node_data: None,
-            parent: vfsp,
-            typ: super::vfs::VNodeType::Directory,
-            data: core::ptr::null_mut(),
-        };
+        return VNode::new(Box::new(file), super::vfs::VNodeType::Directory, vfsp);
     }
 
     fn fid(&mut self, _path: &str, _vfsp: *const super::vfs::Vfs) -> Option<super::vfs::FileId> {
@@ -573,7 +563,7 @@ enum File {
     Dir(FatDirectory),
 }
 
-impl<'a> VNodeOperations for File {
+impl VNodeOperations for File {
     fn access(&mut self, _m: u32, _c: super::vfs::UserCred, _vp: *const VNode) {
         todo!("VNODE OPERATIONS");
     }
@@ -641,7 +631,7 @@ impl<'a> VNodeOperations for File {
         _c: super::vfs::UserCred,
         vp: *const VNode,
     ) -> Result<super::vfs::VNode, ()> {
-        let fat_fs = unsafe { (*(*vp).parent).data.cast::<FatFs>() };
+        let fat_fs = unsafe { (*(*vp).parent_vfs).data.cast::<FatFs>() };
 
         match self {
             File::Dir(directory) => unsafe {
@@ -662,17 +652,7 @@ impl<'a> VNodeOperations for File {
                     File::Archive(FatFile { file_entry })
                 };
 
-                let vnode = VNode {
-                    flags: 0,
-                    ref_count: 0,
-                    shared_lock_count: 0,
-                    exclusive_lock_count: 0,
-                    ops: Box::new(file),
-                    node_data: None,
-                    parent: (*vp).parent,
-                    typ: file_typ,
-                    data: core::ptr::null_mut(),
-                };
+                let vnode = VNode::new(Box::new(file), file_typ, (*vp).parent_vfs);
 
                 Ok(vnode)
             },
@@ -698,7 +678,7 @@ impl<'a> VNodeOperations for File {
     ) -> Result<Arc<[u8]>, ()> {
         match self {
             File::Archive(archive) => {
-                let fat_fs = unsafe { (*(*vp).parent).data.cast::<FatFs>() };
+                let fat_fs = unsafe { (*(*vp).parent_vfs).data.cast::<FatFs>() };
 
                 let mut file: Vec<u8> = Vec::with_capacity(archive.file_entry.file_size as usize);
                 let mut file_ptr_index = 0;

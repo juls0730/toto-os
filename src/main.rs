@@ -7,7 +7,6 @@ use core::ffi::CStr;
 
 use alloc::vec::Vec;
 use limine::KernelFileRequest;
-use mem::HHDM_OFFSET;
 
 use crate::drivers::fs::{
     initramfs,
@@ -35,6 +34,8 @@ pub extern "C" fn _start() -> ! {
     mem::init_allocator();
     drivers::acpi::init_acpi();
 
+    parse_kernel_cmdline();
+
     kmain()
 }
 
@@ -46,23 +47,34 @@ pub fn kmain() -> ! {
 
     let mut file = vfs_open("/firstdir/seconddirbutlonger/yeah.txt").unwrap();
 
-    crate::println!(
-        "YEAH.TXT: {:X?}",
-        &file
-            .ops
-            .open(0, UserCred { uid: 0, gid: 0 }, file.as_ptr())
-            .unwrap()
-    );
+    crate::println!("YEAH.TXT: {:X?}", file.open(0, UserCred { uid: 0, gid: 0 }));
 
     drivers::storage::ide::init();
 
-    let mut nested_file = vfs_open("/mnt/boot/limine/limine.cfg").unwrap();
+    let mut limine_dir = vfs_open("/mnt/boot/limine").unwrap();
 
     crate::println!(
         "LIMINE BOOT: {:X?}",
-        nested_file
-            .ops
-            .open(0, UserCred { uid: 0, gid: 0 }, nested_file.as_ptr())
+        limine_dir
+            .lookup("limine.cfg", UserCred { uid: 0, gid: 0 })
+            .unwrap()
+            .open(0, UserCred { uid: 0, gid: 0 })
+    );
+
+    let mut root_dir = vfs_open("/").unwrap();
+
+    crate::println!(
+        "LIMINE BOOT THROUGH LOOKUP: {:X?}",
+        root_dir
+            .lookup("mnt", UserCred { uid: 0, gid: 0 })
+            .unwrap()
+            .lookup("boot", UserCred { uid: 0, gid: 0 })
+            .unwrap()
+            .lookup("limine", UserCred { uid: 0, gid: 0 })
+            .unwrap()
+            .lookup("limine.cfg", UserCred { uid: 0, gid: 0 })
+            .unwrap()
+            .open(0, UserCred { uid: 0, gid: 0 })
     );
 
     // let file = vfs_open("/example.txt").unwrap();
@@ -178,15 +190,15 @@ impl KernelFeatures {
 }
 
 // TODO: Do this vastly differently
-pub static KERNEL_FEATURES: libs::cell::LazyCell<KernelFeatures> =
-    libs::cell::LazyCell::new(parse_kernel_cmdline);
+pub static KERNEL_FEATURES: libs::cell::OnceCell<KernelFeatures> = libs::cell::OnceCell::new();
 
-fn parse_kernel_cmdline() -> KernelFeatures {
+fn parse_kernel_cmdline() {
     let mut kernel_features: KernelFeatures = KernelFeatures { fat_in_mem: true };
 
     let kernel_file_response = KERNEL_REQUEST.get_response().get();
     if kernel_file_response.is_none() {
-        return kernel_features;
+        KERNEL_FEATURES.set(kernel_features);
+        return;
     }
 
     let cmdline_ptr = kernel_file_response
@@ -198,7 +210,8 @@ fn parse_kernel_cmdline() -> KernelFeatures {
         .as_ptr();
 
     if cmdline_ptr.is_none() {
-        return kernel_features;
+        KERNEL_FEATURES.set(kernel_features);
+        return;
     }
 
     let cmdline = unsafe { CStr::from_ptr(cmdline_ptr.unwrap()) };
@@ -220,7 +233,7 @@ fn parse_kernel_cmdline() -> KernelFeatures {
         }
     }
 
-    return kernel_features;
+    KERNEL_FEATURES.set(kernel_features);
 }
 
 #[panic_handler]

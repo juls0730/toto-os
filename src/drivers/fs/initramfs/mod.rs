@@ -174,7 +174,7 @@ impl Squashfs<'_> {
     }
 
     fn get_inode_block_offset(&self, inode: u64) -> (u64, u16) {
-        let inode_block = ((inode >> 16) & 0x0000FFFFFFFFFFFF) as u64;
+        let inode_block = (inode >> 16) & 0x0000FFFFFFFFFFFF;
         let inode_offset = (inode & 0xFFFF) as u16;
 
         (inode_block, inode_offset)
@@ -359,17 +359,7 @@ impl<'a> FsOps for Squashfs<'a> {
     fn root(&mut self, vfsp: *const super::vfs::Vfs) -> super::vfs::VNode {
         let root_dir = self.read_root_dir();
 
-        super::vfs::VNode {
-            flags: 0,
-            ref_count: 0,
-            shared_lock_count: 0,
-            exclusive_lock_count: 0,
-            ops: Box::new(root_dir),
-            node_data: None,
-            parent: vfsp,
-            typ: super::vfs::VNodeType::Directory,
-            data: core::ptr::null_mut(),
-        }
+        return VNode::new(Box::new(root_dir), VNodeType::Directory, vfsp);
     }
 
     fn fid(&mut self, _path: &str, _vfspp: *const super::vfs::Vfs) -> Option<super::vfs::FileId> {
@@ -424,7 +414,7 @@ impl VNodeOperations for Inode {
         _c: super::vfs::UserCred,
         vp: *const VNode,
     ) -> Result<Arc<[u8]>, ()> {
-        let squashfs = unsafe { (*(*vp).parent).data.cast::<Squashfs>() };
+        let squashfs = unsafe { (*(*vp).parent_vfs).data.cast::<Squashfs>() };
 
         match self {
             Inode::BasicFile(file) => unsafe {
@@ -556,7 +546,7 @@ impl VNodeOperations for Inode {
         _c: super::vfs::UserCred,
         vp: *const VNode,
     ) -> Result<super::vfs::VNode, ()> {
-        let squashfs = unsafe { (*(*vp).parent).data.cast::<Squashfs>() };
+        let squashfs = unsafe { (*(*vp).parent_vfs).data.cast::<Squashfs>() };
 
         match self {
             Inode::BasicDirectory(_) | Inode::ExtendedDirectory(_) => unsafe {
@@ -566,17 +556,7 @@ impl VNodeOperations for Inode {
                     Inode::BasicFile(_) => VNodeType::Regular,
                 };
 
-                let vnode = VNode {
-                    flags: 0,
-                    ref_count: 0,
-                    shared_lock_count: 0,
-                    exclusive_lock_count: 0,
-                    ops: Box::new(inode),
-                    node_data: None,
-                    parent: (*vp).parent,
-                    typ: vnode_type,
-                    data: core::ptr::null_mut(),
-                };
+                let vnode = VNode::new(Box::new(inode), vnode_type, (*vp).parent_vfs);
 
                 return Ok(vnode);
             },

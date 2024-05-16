@@ -199,7 +199,7 @@ run-aarch64:
 	qemu-system-aarch64 ${QEMU_OPTS} -cpu cortex-a72 -device ramfb -device qemu-xhci -device usb-kbd -boot d
 
 line-count:
-		cloc --quiet --exclude-dir=bin --csv src/ | tail -n 1 | awk -F, '{print $$5}'
+		cloc --quiet --exclude-dir=bin --include-lang=Rust --csv src/ | tail -n 1 | awk -F, '{print $$5}'
 clean:
 		cargo clean
 		rm -rf ${ARTIFACTS_PATH}

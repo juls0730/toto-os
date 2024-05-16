@@ -49,11 +49,8 @@ fn get_function_name(function_address: u64) -> Result<(String, u64), ()> {
     // TODO: dont rely on initramfs being mounted at /
     let mut symbols_fd = vfs_open("/symbols.table")?;
 
-    let symbols_table_bytes = symbols_fd.ops.open(
-        0,
-        crate::drivers::fs::vfs::UserCred { uid: 0, gid: 0 },
-        symbols_fd.as_ptr(),
-    )?;
+    let symbols_table_bytes =
+        symbols_fd.open(0, crate::drivers::fs::vfs::UserCred { uid: 0, gid: 0 })?;
     let symbols_table = core::str::from_utf8(&symbols_table_bytes).ok().ok_or(())?;
 
     let mut previous_symbol: Option<(&str, u64)> = None;

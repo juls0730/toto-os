@@ -70,15 +70,15 @@ impl LinkedListAllocator {
     }
 
     fn alloc_from_node(node: &MemNode, layout: Layout) -> *mut u8 {
-        let start = align_up(node.addr() as usize, layout.align());
+        let start = align_up(node.addr(), layout.align());
         let end = start + layout.size();
 
-        if end > node.end_addr() as usize {
+        if end > node.end_addr() {
             // aligned address goes outside the bounds of the node
             return core::ptr::null_mut();
         }
 
-        let extra = node.end_addr() as usize - end;
+        let extra = node.end_addr() - end;
         if extra > 0 && extra < core::mem::size_of::<MemNode>() {
             // Node size minus allocation size is less than the minimum size needed for a node,
             // thus, if we let the allocation to happen in this node, we lose track of the extra memory

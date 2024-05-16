@@ -1,4 +1,6 @@
-use alloc::{boxed::Box, string::String, sync::Arc};
+use core::ptr::NonNull;
+
+use alloc::{string::String, sync::Arc};
 
 #[repr(u8)]
 pub enum DeviceType {
@@ -11,7 +13,7 @@ pub struct Device {
     typ: DeviceType,
     block_size: usize,
     name: String,
-    ops: Box<dyn DeviceOperations>,
+    ops: NonNull<dyn DeviceOperations>,
 }
 
 pub trait DeviceOperations {

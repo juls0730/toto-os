@@ -100,7 +100,7 @@ impl<'a, F: Fn(&[u8]) -> Result<Vec<u8>, ()>> ChunkReader<'a, F> {
 
             while total_length != chunk {
                 chunk_idx += 1;
-                total_length += (self.chunks[0].len() as usize + HEADER_SIZE) as u64;
+                total_length += (self.chunks[0].len() + HEADER_SIZE) as u64;
             }
 
             chunk = chunk_idx;
@@ -132,7 +132,7 @@ impl<'a, F: Fn(&[u8]) -> Result<Vec<u8>, ()>> ChunkReader<'a, F> {
                 block_end = block_start + size;
             }
 
-            data.extend(self.chunks[i][block_start..block_end].into_iter());
+            data.extend(self.chunks[i][block_start..block_end].iter());
 
             offset = 0;
         }

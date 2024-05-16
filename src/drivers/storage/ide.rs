@@ -5,7 +5,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use crate::{
     arch::io::{inb, insw, inw, outb, outsw},
     drivers::{
-        fs::{devfs::DeviceOperations, fat, vfs::add_vfs},
+        fs::{fat, vfs::add_vfs},
         storage::{GPTHeader, GPTPartitionEntry, Partition, MBR},
     },
     libs::{sync::Mutex, uuid::Uuid},
@@ -296,7 +296,7 @@ impl ATABus {
         sector_count: usize,
     ) -> Result<Arc<[u8]>, ()> {
         let mut buffer: Vec<u8> = Vec::with_capacity(ATA_SECTOR_SIZE * sector_count);
-        unsafe { buffer.set_len(buffer.capacity()) };
+        buffer.resize(buffer.capacity(), 0);
 
         self.ide_access(
             drive,

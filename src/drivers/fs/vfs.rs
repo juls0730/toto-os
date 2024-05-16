@@ -1,3 +1,5 @@
+// is this terrible? God yes, but it works
+
 use core::{fmt::Debug, ptr::NonNull};
 
 use alloc::{
@@ -38,12 +40,66 @@ impl Vfs {
         };
     }
 
-    fn as_ptr(&self) -> *const Vfs {
+    fn as_ptr(&self) -> *const Self {
         core::ptr::addr_of!(*self)
     }
 
-    fn as_mut_ptr(&mut self) -> *mut Vfs {
-        core::ptr::addr_of_mut!(*self)
+    pub fn mount(&mut self, path: &str) {
+        if self.ops.is_none() {
+            panic!("FsOps is null");
+        }
+
+        let vfsp = self.as_ptr();
+
+        unsafe { self.ops.unwrap().as_mut().mount(path, &mut self.data, vfsp) };
+    }
+
+    pub fn unmount(&mut self) {
+        if self.ops.is_none() {
+            panic!("FsOps is null");
+        }
+
+        unsafe { self.ops.unwrap().as_mut().unmount(self.as_ptr()) };
+    }
+
+    pub fn root(&mut self) -> VNode {
+        if self.ops.is_none() {
+            panic!("FsOps is null");
+        }
+
+        unsafe { self.ops.unwrap().as_mut().root(self.as_ptr()) }
+    }
+
+    pub fn statfs(&mut self) -> StatFs {
+        if self.ops.is_none() {
+            panic!("FsOps is null");
+        }
+
+        unsafe { self.ops.unwrap().as_mut().statfs(self.as_ptr()) }
+    }
+
+    pub fn sync(&mut self) {
+        if self.ops.is_none() {
+            panic!("FsOps is null");
+        }
+
+        unsafe { self.ops.unwrap().as_mut().sync(self.as_ptr()) };
+    }
+
+    pub fn fid(&mut self, path: &str) -> Option<FileId> {
+        if self.ops.is_none() {
+            panic!("FsOps is null");
+        }
+
+        unsafe { self.ops.unwrap().as_mut().fid(path, self.as_ptr()) }
+    }
+
+    pub fn vget(&mut self, fid: FileId) -> VNode {
+        if self.ops.is_none() {
+            panic!("FsOps is null");
+        }
+
+        unsafe { self.ops.unwrap().as_mut().vget(fid, self.as_ptr()) }
     }
 }
 
@@ -93,20 +149,161 @@ pub enum VNodeType {
 }
 
 pub struct VNode {
+    // for internal use only
+    relative_path: String,
     pub flags: u16,
     pub ref_count: u16,
     pub shared_lock_count: u16,
     pub exclusive_lock_count: u16,
-    pub ops: Box<dyn VNodeOperations>,
+    ops: NonNull<dyn VNodeOperations>,
     pub node_data: Option<NodeData>,
-    pub parent: *const Vfs,
+    pub parent_vfs: *const Vfs,
     pub typ: VNodeType,
     pub data: *mut u8,
 }
 
 impl VNode {
+    pub fn new(ops: Box<dyn VNodeOperations>, file_typ: VNodeType, parent_vfs: *const Vfs) -> Self {
+        return Self {
+            relative_path: "".to_string(),
+            flags: 0,
+            ref_count: 0,
+            shared_lock_count: 0,
+            exclusive_lock_count: 0,
+            ops: unsafe { NonNull::new_unchecked(Box::into_raw(ops)) },
+            node_data: None,
+            parent_vfs,
+            typ: file_typ,
+            data: core::ptr::null_mut(),
+        };
+    }
+
     pub fn as_ptr(&self) -> *const VNode {
         core::ptr::addr_of!(*self)
+    }
+
+    // Trait functions
+    pub fn open(&mut self, f: u32, c: UserCred) -> Result<Arc<[u8]>, ()> {
+        unsafe { self.ops.as_mut().open(f, c, self.as_ptr()) }
+    }
+
+    pub fn close(&mut self, f: u32, c: UserCred) {
+        unsafe { self.ops.as_mut().close(f, c, self.as_ptr()) }
+    }
+
+    pub fn rdwr(&mut self, uiop: *const UIO, direction: IODirection, f: u32, c: UserCred) {
+        unsafe { self.ops.as_mut().rdwr(uiop, direction, f, c, self.as_ptr()) }
+    }
+
+    pub fn ioctl(&mut self, com: u32, d: *mut u8, f: u32, c: UserCred) {
+        unsafe { self.ops.as_mut().ioctl(com, d, f, c, self.as_ptr()) }
+    }
+
+    pub fn select(&mut self, w: IODirection, c: UserCred) {
+        unsafe { self.ops.as_mut().select(w, c, self.as_ptr()) }
+    }
+
+    pub fn getattr(&mut self, c: UserCred) -> VAttr {
+        unsafe { self.ops.as_mut().getattr(c, self.as_ptr()) }
+    }
+
+    pub fn setattr(&mut self, va: VAttr, c: UserCred) {
+        unsafe { self.ops.as_mut().setattr(va, c, self.as_ptr()) }
+    }
+
+    pub fn access(&mut self, m: u32, c: UserCred) {
+        unsafe { self.ops.as_mut().access(m, c, self.as_ptr()) }
+    }
+
+    pub fn lookup(&mut self, nm: &str, c: UserCred) -> Result<VNode, ()> {
+        let mut vnode = unsafe { self.ops.as_mut().lookup(nm, c, self.as_ptr()) }?;
+
+        // TODO: the memory cost of this is pretty bad
+        vnode.relative_path = self.relative_path.clone() + "/" + nm;
+
+        unsafe {
+            if let Some(mut new_vfs) = vfs_has_mount_point(
+                &((*self.parent_vfs).mount_point.clone().unwrap() + &vnode.relative_path),
+            ) {
+                return Ok(new_vfs.as_mut().root());
+            }
+        }
+
+        return Ok(vnode);
+    }
+
+    pub fn create(
+        &mut self,
+        nm: &str,
+        va: VAttr,
+        e: u32,
+        m: u32,
+        c: UserCred,
+    ) -> Result<VNode, ()> {
+        unsafe { self.ops.as_mut().create(nm, va, e, m, c, self.as_ptr()) }
+    }
+
+    pub fn link(&mut self, target_dir: *mut VNode, target_name: &str, c: UserCred) {
+        unsafe {
+            self.ops
+                .as_mut()
+                .link(target_dir, target_name, c, self.as_ptr())
+        }
+    }
+
+    pub fn rename(&mut self, nm: &str, target_dir: *mut VNode, target_name: &str, c: UserCred) {
+        unsafe {
+            self.ops
+                .as_mut()
+                .rename(nm, target_dir, target_name, c, self.as_ptr())
+        }
+    }
+
+    pub fn mkdir(&mut self, nm: &str, va: VAttr, c: UserCred) -> Result<VNode, ()> {
+        unsafe { self.ops.as_mut().mkdir(nm, va, c, self.as_ptr()) }
+    }
+
+    pub fn readdir(&mut self, uiop: *const UIO, c: UserCred) {
+        unsafe { self.ops.as_mut().readdir(uiop, c, self.as_ptr()) }
+    }
+
+    pub fn symlink(&mut self, link_name: &str, va: VAttr, target_name: &str, c: UserCred) {
+        unsafe {
+            self.ops
+                .as_mut()
+                .symlink(link_name, va, target_name, c, self.as_ptr())
+        }
+    }
+
+    pub fn readlink(&mut self, uiop: *const UIO, c: UserCred) {
+        unsafe { self.ops.as_mut().readlink(uiop, c, self.as_ptr()) }
+    }
+
+    pub fn fsync(&mut self, c: UserCred) {
+        unsafe { self.ops.as_mut().fsync(c, self.as_ptr()) }
+    }
+
+    pub fn inactive(&mut self, c: UserCred) {
+        unsafe { self.ops.as_mut().inactive(c, self.as_ptr()) }
+    }
+
+    pub fn bmap(&mut self, block_number: u32, bnp: ()) -> VNode {
+        unsafe { self.ops.as_mut().bmap(block_number, bnp, self.as_ptr()) }
+    }
+
+    pub fn strategy(&mut self, bp: ()) {
+        unsafe { self.ops.as_mut().strategy(bp, self.as_ptr()) }
+    }
+
+    pub fn bread(&mut self, block_number: u32) -> Arc<[u8]> {
+        unsafe { self.ops.as_mut().bread(block_number, self.as_ptr()) }
+    }
+}
+
+impl Drop for VNode {
+    fn drop(&mut self) {
+        let vnode_ops = unsafe { Box::from_raw(self.ops.as_ptr()) };
+        drop(vnode_ops)
     }
 }
 
@@ -222,49 +419,21 @@ pub struct VAttr {
     used_blocks: u32,
 }
 
-unsafe fn find_mount_point(file_path: &str) -> Option<NonNull<Vfs>> {
-    // TODO: refactor
-    let mut mount_point: Option<NonNull<Vfs>> = None;
+unsafe fn vfs_has_mount_point(mount_point: &str) -> Option<NonNull<Vfs>> {
     let mut current = ROOT_VFS.next;
 
     while let Some(node) = current {
-        if node
-            .as_ref()
-            .mount_point
-            .as_ref()
-            .expect("Null mount point")
-            == "/"
-            && mount_point.is_none()
-        {
-            mount_point = Some(node);
+        if node.as_ref().mount_point.as_ref().unwrap() == mount_point {
+            return Some(node);
         }
 
-        let mount_point_str = node
-            .as_ref()
-            .mount_point
-            .as_ref()
-            .expect("Null mount point");
-        if file_path.starts_with(mount_point_str)
-            && mount_point_str.len()
-                > (mount_point.unwrap().as_ref())
-                    .mount_point
-                    .as_ref()
-                    .unwrap()
-                    .len()
-        {
-            mount_point = Some(node);
-        }
         current = unsafe { (*node.as_ptr()).next };
     }
 
-    mount_point
+    None
 }
 
-pub fn add_vfs(mut mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
-    if mount_point != "/" {
-        mount_point = mount_point.trim_end_matches('/');
-    }
-
+pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
     /// # Safety
     /// Consumes vfs
     unsafe fn deallocate_vfs(vfs: NonNull<Vfs>) {
@@ -277,8 +446,6 @@ pub fn add_vfs(mut mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> 
     }
 
     let layout = alloc::alloc::Layout::new::<Vfs>();
-    // TODO: its fucking broken again
-    // let vfs_ptr = PHYSICAL_MEMORY_MANAGER.alloc(1).cast::<Vfs>();
     let vfs_ptr = unsafe { alloc(layout).cast::<Vfs>() };
 
     if vfs_ptr.is_null() {
@@ -289,8 +456,9 @@ pub fn add_vfs(mut mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> 
     unsafe {
         let mut vfs = Vfs::null();
         vfs.ops = Some(NonNull::new_unchecked(Box::into_raw(fs_ops)));
-        vfs.mount_point = Some(mount_point.to_string());
-        *vfs_ptr = vfs;
+        // 'normalize' the path (yes, making "/" == "" is intentional)
+        vfs.mount_point = Some(mount_point.trim_end_matches('/').to_string());
+        vfs_ptr.write(vfs);
     };
 
     // Safety: We know vfs_ptr is not null
@@ -300,35 +468,29 @@ pub fn add_vfs(mut mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> 
 
     log_info!("Adding vfs at {mount_point}");
 
-    // TODO: dont give / special treatment
     if mount_point == "/" {
         if unsafe { ROOT_VFS.next.is_some() } {
             unsafe {
                 deallocate_vfs(vfs_ptr);
             };
-            // PHYSICAL_MEMORY_MANAGER.dealloc(vfs_ptr.cast::<u8>(), 1);
+
             return Err(());
         }
 
-        unsafe {
-            vfs.ops
-                .unwrap()
-                .as_mut()
-                .mount(mount_point, &mut vfs.data, vfs_ptr.as_ptr());
-        }
+        vfs.mount(mount_point);
 
         unsafe { ROOT_VFS.next = Some(vfs_ptr) };
     } else {
-        // TODO: technically this allows you to mount file systems at nonexistent mount point
         if unsafe { ROOT_VFS.next.is_none() } {
             unsafe {
                 deallocate_vfs(vfs_ptr);
             };
-            // PHYSICAL_MEMORY_MANAGER.dealloc(vfs_ptr.cast::<u8>(), 1);
             return Err(());
         }
 
-        // let target_vfs = unsafe { ROOT_VFS.next.unwrap() };
+        if vfs_open(mount_point).is_err() {
+            return Err(());
+        }
 
         let mut next_vfs = unsafe { ROOT_VFS.next };
 
@@ -337,7 +499,6 @@ pub fn add_vfs(mut mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> 
                 unsafe {
                     deallocate_vfs(vfs_ptr);
                 };
-                // PHYSICAL_MEMORY_MANAGER.dealloc(vfs_ptr.cast::<u8>(), 1);
                 return Err(());
             }
 
@@ -352,16 +513,10 @@ pub fn add_vfs(mut mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> 
             unsafe {
                 deallocate_vfs(vfs_ptr);
             };
-            // PHYSICAL_MEMORY_MANAGER.dealloc(vfs_ptr.cast::<u8>(), 1);
             return Err(());
         }
 
-        unsafe {
-            vfs.ops
-                .unwrap()
-                .as_mut()
-                .mount(mount_point, &mut vfs.data, vfs_ptr.as_ptr());
-        }
+        vfs.mount(mount_point);
 
         unsafe { (next_vfs.unwrap()).as_mut().next = Some(vfs_ptr) };
     }
@@ -376,23 +531,7 @@ pub fn vfs_open(path: &str) -> Result<VNode, ()> {
         return Err(());
     }
 
-    let root_vfs = unsafe { find_mount_point(path) };
-
-    if root_vfs.is_none() {
-        return Err(());
-    }
-
-    let mut cur_vnode = unsafe {
-        root_vfs
-            .unwrap()
-            .as_mut()
-            .ops
-            .unwrap()
-            .as_mut()
-            .root(root_vfs.unwrap().as_ptr())
-    };
-
-    let path = &path[unsafe { root_vfs.unwrap().as_ref().mount_point.as_ref().unwrap() }.len()..];
+    let mut cur_vnode = unsafe { ROOT_VFS.next.unwrap().as_mut().root() };
 
     let parts = path.split('/').collect::<Vec<&str>>();
 
@@ -401,11 +540,7 @@ pub fn vfs_open(path: &str) -> Result<VNode, ()> {
             continue;
         }
 
-        if let Ok(vnode) =
-            cur_vnode
-                .ops
-                .lookup(part, UserCred { uid: 0, gid: 0 }, cur_vnode.as_ptr())
-        {
+        if let Ok(vnode) = cur_vnode.lookup(part, UserCred { uid: 0, gid: 0 }) {
             cur_vnode = vnode;
         } else {
             return Err(());

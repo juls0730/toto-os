@@ -126,9 +126,7 @@ struct HuffRing {
 impl HuffRing {
     fn new() -> Self {
         let mut data = Vec::with_capacity(32 * 1024);
-        unsafe {
-            data.set_len(32 * 1024);
-        };
+        data.resize(data.capacity(), 0);
 
         return Self { pointer: 0, data };
     }
