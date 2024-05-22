@@ -95,7 +95,11 @@ pub fn idt_init() {
             let mut idt_lock = IDT.lock();
             IDT_PTR.base = idt_lock.as_ptr() as u64;
 
-            core::ptr::write_bytes(idt_lock.as_mut_ptr() as *mut core::ffi::c_void, 0, idt_size);
+            core::ptr::write_bytes(
+                idt_lock.as_mut_ptr().cast::<core::ffi::c_void>(),
+                0,
+                idt_size,
+            );
         }
 
         // Set every interrupt to the "null" interrupt handler (it does nothing)

@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 use alloc::{
     boxed::Box,
     string::{String, ToString},
@@ -265,45 +267,6 @@ impl FatFs {
             _ => bpb.sectors_per_fat as usize,
         };
 
-        let bytes_per_fat = 512 * sectors_per_fat;
-
-        let mut fat: Option<Arc<[u32]>> = None;
-
-        if crate::KERNEL_FEATURES.fat_in_mem {
-            let cluster_bytes = match fat_type {
-                FatType::Fat32(_) => 4,
-                _ => 2,
-            };
-
-            let mut fat_vec: Vec<u32> = Vec::with_capacity(bytes_per_fat / cluster_bytes);
-
-            for i in 0..sectors_per_fat {
-                let sector = partition
-                    .read(fat_start + i as u64, 1)
-                    .expect("Failed to read FAT");
-                for j in 0..(512 / cluster_bytes) {
-                    match fat_type {
-                        FatType::Fat32(_) => fat_vec.push(u32::from_le_bytes(
-                            sector[j * cluster_bytes..(j * cluster_bytes + cluster_bytes)]
-                                .try_into()
-                                .unwrap(),
-                        )),
-                        _ => fat_vec.push(u16::from_le_bytes(
-                            sector[j * cluster_bytes..(j * cluster_bytes + cluster_bytes)]
-                                .try_into()
-                                .unwrap(),
-                        ) as u32),
-                    }
-                }
-            }
-
-            fat = Some(Arc::from(fat_vec));
-        } else {
-            crate::log_info!(
-                "\x1B[33mWARNING\x1B[0m: FAT is not being stored in memory, this feature is experimental and file reads are expected to be slower."
-            )
-        }
-
         crate::println!("Found {fat_type:?} FS");
 
         let cluster_size = bpb.sectors_per_cluster as usize * 512;
@@ -311,7 +274,7 @@ impl FatFs {
         return Ok(Self {
             partition,
             fs_info,
-            fat,
+            fat: None,
             bpb,
             fat_start,
             fat_type,
@@ -511,17 +474,57 @@ impl FatFs {
 }
 
 impl FsOps for FatFs {
-    fn mount(&mut self, _path: &str, data: &mut *mut u8, _vfsp: *const super::vfs::Vfs) {
-        // TODO: load the FAT into memory here
+    fn mount(&mut self, _path: &str, data: &mut *mut u8, _vfsp: NonNull<super::vfs::Vfs>) {
+        let bytes_per_fat = 512 * self.sectors_per_fat;
+
+        let mut fat: Option<Arc<[u32]>> = None;
+
+        if crate::KERNEL_FEATURES.fat_in_mem {
+            let cluster_bytes = match self.fat_type {
+                FatType::Fat32(_) => 4,
+                _ => 2,
+            };
+
+            let mut fat_vec: Vec<u32> = Vec::with_capacity(bytes_per_fat / cluster_bytes);
+
+            for i in 0..self.sectors_per_fat {
+                let sector = self
+                    .partition
+                    .read(self.fat_start + i as u64, 1)
+                    .expect("Failed to read FAT");
+                for j in 0..(512 / cluster_bytes) {
+                    match self.fat_type {
+                        FatType::Fat32(_) => fat_vec.push(u32::from_le_bytes(
+                            sector[j * cluster_bytes..(j * cluster_bytes + cluster_bytes)]
+                                .try_into()
+                                .unwrap(),
+                        )),
+                        _ => fat_vec.push(u16::from_le_bytes(
+                            sector[j * cluster_bytes..(j * cluster_bytes + cluster_bytes)]
+                                .try_into()
+                                .unwrap(),
+                        ) as u32),
+                    }
+                }
+            }
+
+            fat = Some(Arc::from(fat_vec));
+        } else {
+            crate::log_info!(
+                "\x1B[33mWARNING\x1B[0m: FAT is not being stored in memory, this feature is experimental and file reads are expected to be slower."
+            )
+        }
+
+        self.fat = fat;
 
         *data = core::ptr::addr_of!(*self) as *mut u8;
     }
 
-    fn unmount(&mut self, _vfsp: *const super::vfs::Vfs) {
-        // TODO: unload the FAT form memory
+    fn unmount(&mut self, _vfsp: NonNull<super::vfs::Vfs>) {
+        self.fat = None;
     }
 
-    fn root(&mut self, vfsp: *const super::vfs::Vfs) -> super::vfs::VNode {
+    fn root(&mut self, vfsp: NonNull<super::vfs::Vfs>) -> super::vfs::VNode {
         let root_cluster = match self.fat_type {
             FatType::Fat32(ebpb) => ebpb.root_dir_cluster as usize,
             _ => self.sector_to_cluster(
@@ -537,22 +540,22 @@ impl FsOps for FatFs {
         return VNode::new(Box::new(file), super::vfs::VNodeType::Directory, vfsp);
     }
 
-    fn fid(&mut self, _path: &str, _vfsp: *const super::vfs::Vfs) -> Option<super::vfs::FileId> {
+    fn fid(&mut self, _path: &str, _vfsp: NonNull<super::vfs::Vfs>) -> Option<super::vfs::FileId> {
         todo!("FAT FID");
     }
 
-    fn statfs(&mut self, _vfsp: *const super::vfs::Vfs) -> super::vfs::StatFs {
+    fn statfs(&mut self, _vfsp: NonNull<super::vfs::Vfs>) -> super::vfs::StatFs {
         todo!("FAT STATFS");
     }
 
-    fn sync(&mut self, _vfsp: *const super::vfs::Vfs) {
+    fn sync(&mut self, _vfsp: NonNull<super::vfs::Vfs>) {
         todo!("FAT SYNC");
     }
 
     fn vget(
         &mut self,
         _fid: super::vfs::FileId,
-        _vfsp: *const super::vfs::Vfs,
+        _vfsp: NonNull<super::vfs::Vfs>,
     ) -> super::vfs::VNode {
         todo!("FAT VGET");
     }
@@ -564,19 +567,19 @@ enum File {
 }
 
 impl VNodeOperations for File {
-    fn access(&mut self, _m: u32, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn access(&mut self, _m: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!("VNODE OPERATIONS");
     }
 
-    fn bmap(&mut self, _block_number: u32, _bnp: (), _vp: *const VNode) -> super::vfs::VNode {
+    fn bmap(&mut self, _block_number: u32, _bnp: (), _vp: NonNull<VNode>) -> super::vfs::VNode {
         todo!("VNODE OPERATIONS");
     }
 
-    fn bread(&mut self, _block_number: u32, _vp: *const VNode) -> Arc<[u8]> {
+    fn bread(&mut self, _block_number: u32, _vp: NonNull<VNode>) -> Arc<[u8]> {
         todo!("VNODE OPERATIONS");
     }
 
-    fn close(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn close(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!("VNODE OPERATIONS");
     }
 
@@ -587,20 +590,20 @@ impl VNodeOperations for File {
         _e: u32,
         _m: u32,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) -> Result<super::vfs::VNode, ()> {
         todo!("VNODE OPERATIONS");
     }
 
-    fn fsync(&mut self, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn fsync(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!("VNODE OPERATIONS");
     }
 
-    fn getattr(&mut self, _c: super::vfs::UserCred, _vp: *const VNode) -> super::vfs::VAttr {
+    fn getattr(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) -> super::vfs::VAttr {
         todo!("VNODE OPERATIONS");
     }
 
-    fn inactive(&mut self, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn inactive(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!("VNODE OPERATIONS");
     }
 
@@ -610,7 +613,7 @@ impl VNodeOperations for File {
         _d: *mut u8,
         _f: u32,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!("VNODE OPERATIONS");
     }
@@ -620,7 +623,7 @@ impl VNodeOperations for File {
         _target_dir: *mut super::vfs::VNode,
         _target_name: &str,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!("VNODE OPERATIONS");
     }
@@ -629,9 +632,9 @@ impl VNodeOperations for File {
         &mut self,
         nm: &str,
         _c: super::vfs::UserCred,
-        vp: *const VNode,
+        vp: NonNull<VNode>,
     ) -> Result<super::vfs::VNode, ()> {
-        let fat_fs = unsafe { (*(*vp).parent_vfs).data.cast::<FatFs>() };
+        let fat_fs = unsafe { (*vp.as_ptr()).parent_vfs.as_mut().data.cast::<FatFs>() };
 
         match self {
             File::Dir(directory) => unsafe {
@@ -652,7 +655,7 @@ impl VNodeOperations for File {
                     File::Archive(FatFile { file_entry })
                 };
 
-                let vnode = VNode::new(Box::new(file), file_typ, (*vp).parent_vfs);
+                let vnode = VNode::new(Box::new(file), file_typ, (*vp.as_ptr()).parent_vfs);
 
                 Ok(vnode)
             },
@@ -665,7 +668,7 @@ impl VNodeOperations for File {
         _nm: &str,
         _va: super::vfs::VAttr,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) -> Result<super::vfs::VNode, ()> {
         todo!("VNODE OPERATIONS");
     }
@@ -674,11 +677,11 @@ impl VNodeOperations for File {
         &mut self,
         _f: u32,
         _c: super::vfs::UserCred,
-        vp: *const VNode,
+        vp: NonNull<VNode>,
     ) -> Result<Arc<[u8]>, ()> {
         match self {
             File::Archive(archive) => {
-                let fat_fs = unsafe { (*(*vp).parent_vfs).data.cast::<FatFs>() };
+                let fat_fs = unsafe { (*vp.as_ptr()).parent_vfs.as_mut().data.cast::<FatFs>() };
 
                 let mut file: Vec<u8> = Vec::with_capacity(archive.file_entry.file_size as usize);
                 let mut file_ptr_index = 0;
@@ -746,8 +749,8 @@ impl VNodeOperations for File {
         _direction: super::vfs::IODirection,
         _f: u32,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
-    ) {
+        _vp: NonNull<VNode>,
+    ) -> Result<Arc<[u8]>, ()> {
         todo!("VNODE OPERATIONS");
     }
 
@@ -755,7 +758,7 @@ impl VNodeOperations for File {
         &mut self,
         _uiop: *const super::vfs::UIO,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!("VNODE OPERATIONS");
     }
@@ -764,7 +767,7 @@ impl VNodeOperations for File {
         &mut self,
         _uiop: *const super::vfs::UIO,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!("VNODE OPERATIONS");
     }
@@ -775,20 +778,25 @@ impl VNodeOperations for File {
         _target_dir: *mut super::vfs::VNode,
         _target_name: &str,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!("VNODE OPERATIONS");
     }
 
-    fn select(&mut self, _w: super::vfs::IODirection, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn select(
+        &mut self,
+        _w: super::vfs::IODirection,
+        _c: super::vfs::UserCred,
+        _vp: NonNull<VNode>,
+    ) {
         todo!("VNODE OPERATIONS");
     }
 
-    fn setattr(&mut self, _va: super::vfs::VAttr, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn setattr(&mut self, _va: super::vfs::VAttr, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!("VNODE OPERATIONS");
     }
 
-    fn strategy(&mut self, _bp: (), _vp: *const VNode) {
+    fn strategy(&mut self, _bp: (), _vp: NonNull<VNode>) {
         todo!("VNODE OPERATIONS");
     }
 
@@ -798,7 +806,7 @@ impl VNodeOperations for File {
         _va: super::vfs::VAttr,
         _target_name: &str,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!("VNODE OPERATIONS");
     }

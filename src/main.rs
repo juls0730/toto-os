@@ -1,4 +1,10 @@
-#![feature(allocator_api, abi_x86_interrupt, naked_functions, const_mut_refs)]
+#![feature(
+    allocator_api,
+    abi_x86_interrupt,
+    naked_functions,
+    const_mut_refs,
+    negative_impls
+)]
 #![allow(clippy::needless_return)]
 #![no_std]
 #![no_main]
@@ -45,13 +51,12 @@ pub fn kmain() -> ! {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     drivers::pci::enumerate_pci_bus();
 
-    let mut file = vfs_open("/firstdir/seconddirbutlonger/yeah.txt").unwrap();
+    let file = vfs_open("/firstdir/seconddirbutlonger/yeah.txt").unwrap();
 
     crate::println!("YEAH.TXT: {:X?}", file.open(0, UserCred { uid: 0, gid: 0 }));
 
     drivers::storage::ide::init();
-
-    let mut limine_dir = vfs_open("/mnt/boot/limine").unwrap();
+    let limine_dir = vfs_open("/mnt/boot/limine").unwrap();
 
     crate::println!(
         "LIMINE BOOT: {:X?}",
@@ -61,21 +66,22 @@ pub fn kmain() -> ! {
             .open(0, UserCred { uid: 0, gid: 0 })
     );
 
-    let mut root_dir = vfs_open("/").unwrap();
+    // TODO: figure out whether this should or shouldnt work in the first place
+    // let root_dir = vfs_open("/").unwrap();
 
-    crate::println!(
-        "LIMINE BOOT THROUGH LOOKUP: {:X?}",
-        root_dir
-            .lookup("mnt", UserCred { uid: 0, gid: 0 })
-            .unwrap()
-            .lookup("boot", UserCred { uid: 0, gid: 0 })
-            .unwrap()
-            .lookup("limine", UserCred { uid: 0, gid: 0 })
-            .unwrap()
-            .lookup("limine.cfg", UserCred { uid: 0, gid: 0 })
-            .unwrap()
-            .open(0, UserCred { uid: 0, gid: 0 })
-    );
+    // crate::println!(
+    //     "LIMINE BOOT THROUGH LOOKUP: {:X?}",
+    //     root_dir
+    //         .lookup("mnt", UserCred { uid: 0, gid: 0 })
+    //         .unwrap()
+    //         .lookup("boot", UserCred { uid: 0, gid: 0 })
+    //         .unwrap()
+    //         .lookup("limine", UserCred { uid: 0, gid: 0 })
+    //         .unwrap()
+    //         .lookup("limine.cfg", UserCred { uid: 0, gid: 0 })
+    //         .unwrap()
+    //         .open(0, UserCred { uid: 0, gid: 0 })
+    // );
 
     // let file = vfs_open("/example.txt").unwrap();
 
@@ -83,20 +89,20 @@ pub fn kmain() -> ! {
     draw_gradient();
 
     // loop {
-    //     let ch = read_serial();
+    //     let ch = crate::drivers::serial::read_serial();
 
     //     if ch == b'\x00' {
     //         continue;
     //     }
 
     //     if ch == b'\x08' {
-    //         write_serial(b'\x08');
-    //         write_serial(b' ');
-    //         write_serial(b'\x08');
+    //         crate::drivers::serial::write_serial(b'\x08');
+    //         crate::drivers::serial::write_serial(b' ');
+    //         crate::drivers::serial::write_serial(b'\x08');
     //     }
 
-    //     if ch > 0x20 && ch < 0x7F {
-    //         write_serial(ch);
+    //     if ch > 0x1F && ch < 0x7F {
+    //         crate::drivers::serial::write_serial(ch);
     //     }
     // }
 

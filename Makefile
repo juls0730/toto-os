@@ -106,6 +106,8 @@ copy-iso-files:
 		mkdir -p ${ISO_PATH}/boot/limine
 		mkdir -p ${ISO_PATH}/EFI/BOOT
 
+		mkdir -p ${ISO_PATH}/mnt
+
 		cp -v limine.cfg limine/limine-bios.sys ${ISO_PATH}/boot/limine
 		cp -v limine/BOOT${LIMINE_BOOT_VARIATION}.EFI ${ISO_PATH}/EFI/BOOT/
 
@@ -158,8 +160,6 @@ compile-bootloader:
 	@if [ ! -d "limine" ]; then \
 		echo "Cloning Limine into limine/..."; \
 		git clone https://github.com/limine-bootloader/limine.git --branch=${LIMINE_BRANCH} --depth=1; \
-	else \
-		echo "Folder limine already exists. Skipping clone."; \
 	fi
 		make -C limine
 

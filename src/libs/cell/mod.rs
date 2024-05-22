@@ -10,6 +10,8 @@ pub struct Cell<T: ?Sized> {
     value: UnsafeCell<T>,
 }
 
+impl<T: ?Sized> !Sync for Cell<T> {}
+
 impl<T> Cell<T> {
     pub const fn new(value: T) -> Cell<T> {
         return Self {

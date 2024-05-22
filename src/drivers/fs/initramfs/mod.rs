@@ -1,7 +1,7 @@
 mod chunk_reader;
 mod superblock;
 
-use core::{fmt::Debug, mem::MaybeUninit};
+use core::{fmt::Debug, mem::MaybeUninit, ptr::NonNull};
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use limine::ModuleRequest;
@@ -82,7 +82,7 @@ impl Squashfs<'_> {
         // crate::log_info!("Parsing initramfs at {:p}", ptr);
 
         // 40 is the offset for bytes used by the archive in the superblock
-        let length = unsafe { u64::from_le(*(ptr.add(40) as *const u64)) as usize };
+        let length = unsafe { u64::from_le(*(ptr.add(40).cast::<u64>())) as usize };
 
         let squashfs_data: &[u8] = unsafe { core::slice::from_raw_parts(ptr, length) };
 
@@ -345,39 +345,39 @@ impl Squashfs<'_> {
 }
 
 impl<'a> FsOps for Squashfs<'a> {
-    fn mount(&mut self, _path: &str, data: &mut *mut u8, _vfspp: *const super::vfs::Vfs) {
+    fn mount(&mut self, _path: &str, data: &mut *mut u8, _vfsp: NonNull<super::vfs::Vfs>) {
         // STUB
 
         // not recommended:tm:
         *data = core::ptr::addr_of!(*self) as *mut u8;
     }
 
-    fn unmount(&mut self, _vfsp: *const super::vfs::Vfs) {
+    fn unmount(&mut self, _vfsp: NonNull<super::vfs::Vfs>) {
         // STUB
     }
 
-    fn root(&mut self, vfsp: *const super::vfs::Vfs) -> super::vfs::VNode {
+    fn root(&mut self, vfsp: NonNull<super::vfs::Vfs>) -> super::vfs::VNode {
         let root_dir = self.read_root_dir();
 
         return VNode::new(Box::new(root_dir), VNodeType::Directory, vfsp);
     }
 
-    fn fid(&mut self, _path: &str, _vfspp: *const super::vfs::Vfs) -> Option<super::vfs::FileId> {
+    fn fid(&mut self, _path: &str, _vfsp: NonNull<super::vfs::Vfs>) -> Option<super::vfs::FileId> {
         todo!();
     }
 
-    fn statfs(&mut self, _vfsp: *const super::vfs::Vfs) -> super::vfs::StatFs {
+    fn statfs(&mut self, _vfsp: NonNull<super::vfs::Vfs>) -> super::vfs::StatFs {
         todo!();
     }
 
-    fn sync(&mut self, _vfsp: *const super::vfs::Vfs) {
+    fn sync(&mut self, _vfsp: NonNull<super::vfs::Vfs>) {
         todo!();
     }
 
     fn vget(
         &mut self,
         _fid: super::vfs::FileId,
-        _vfsp: *const super::vfs::Vfs,
+        _vfsp: NonNull<super::vfs::Vfs>,
     ) -> super::vfs::VNode {
         todo!();
     }
@@ -412,9 +412,9 @@ impl VNodeOperations for Inode {
         &mut self,
         _f: u32,
         _c: super::vfs::UserCred,
-        vp: *const VNode,
+        vp: NonNull<VNode>,
     ) -> Result<Arc<[u8]>, ()> {
-        let squashfs = unsafe { (*(*vp).parent_vfs).data.cast::<Squashfs>() };
+        let squashfs = unsafe { (*vp.as_ptr()).parent_vfs.as_mut().data.cast::<Squashfs>() };
 
         match self {
             Inode::BasicFile(file) => unsafe {
@@ -456,7 +456,7 @@ impl VNodeOperations for Inode {
                     // And since we are building the array due to unaligned pointer shenanigans we need to
                     // include the header bytes otherwise we are short by two bytes
                     let fragment_block_size =
-                        (u16::from_le(core::ptr::read_unaligned(fragment_pointer as *mut u16))
+                        (u16::from_le(core::ptr::read_unaligned(fragment_pointer.cast::<u16>()))
                             & 0x7FFF)
                             + 2;
 
@@ -498,7 +498,7 @@ impl VNodeOperations for Inode {
         }
     }
 
-    fn close(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn close(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!()
     }
 
@@ -508,8 +508,8 @@ impl VNodeOperations for Inode {
         _direction: super::vfs::IODirection,
         _f: u32,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
-    ) {
+        _vp: NonNull<VNode>,
+    ) -> Result<Arc<[u8]>, ()> {
         todo!()
     }
 
@@ -519,24 +519,29 @@ impl VNodeOperations for Inode {
         _d: *mut u8,
         _f: u32,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!()
     }
 
-    fn select(&mut self, _w: super::vfs::IODirection, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn select(
+        &mut self,
+        _w: super::vfs::IODirection,
+        _c: super::vfs::UserCred,
+        _vp: NonNull<VNode>,
+    ) {
         todo!()
     }
 
-    fn getattr(&mut self, _c: super::vfs::UserCred, _vp: *const VNode) -> super::vfs::VAttr {
+    fn getattr(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) -> super::vfs::VAttr {
         todo!()
     }
 
-    fn setattr(&mut self, _va: super::vfs::VAttr, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn setattr(&mut self, _va: super::vfs::VAttr, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!()
     }
 
-    fn access(&mut self, _m: u32, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn access(&mut self, _m: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!()
     }
 
@@ -544,9 +549,11 @@ impl VNodeOperations for Inode {
         &mut self,
         nm: &str,
         _c: super::vfs::UserCred,
-        vp: *const VNode,
+        vp: NonNull<VNode>,
     ) -> Result<super::vfs::VNode, ()> {
-        let squashfs = unsafe { (*(*vp).parent_vfs).data.cast::<Squashfs>() };
+        let squashfs = unsafe { (*vp.as_ptr()).parent_vfs.as_mut().data.cast::<Squashfs>() };
+
+        crate::println!("wawawaw");
 
         match self {
             Inode::BasicDirectory(_) | Inode::ExtendedDirectory(_) => unsafe {
@@ -556,7 +563,7 @@ impl VNodeOperations for Inode {
                     Inode::BasicFile(_) => VNodeType::Regular,
                 };
 
-                let vnode = VNode::new(Box::new(inode), vnode_type, (*vp).parent_vfs);
+                let vnode = VNode::new(Box::new(inode), vnode_type, (*vp.as_ptr()).parent_vfs);
 
                 return Ok(vnode);
             },
@@ -571,7 +578,7 @@ impl VNodeOperations for Inode {
         _e: u32,
         _m: u32,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) -> Result<super::vfs::VNode, ()> {
         todo!()
     }
@@ -581,7 +588,7 @@ impl VNodeOperations for Inode {
         _target_dir: *mut super::vfs::VNode,
         _target_name: &str,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!()
     }
@@ -592,7 +599,7 @@ impl VNodeOperations for Inode {
         _target_dir: *mut super::vfs::VNode,
         _target_name: &str,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!()
     }
@@ -602,7 +609,7 @@ impl VNodeOperations for Inode {
         _nm: &str,
         _va: super::vfs::VAttr,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) -> Result<super::vfs::VNode, ()> {
         todo!()
     }
@@ -611,7 +618,7 @@ impl VNodeOperations for Inode {
         &mut self,
         _uiop: *const super::vfs::UIO,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!()
     }
@@ -622,7 +629,7 @@ impl VNodeOperations for Inode {
         _va: super::vfs::VAttr,
         _target_name: &str,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!()
     }
@@ -631,28 +638,28 @@ impl VNodeOperations for Inode {
         &mut self,
         _uiop: *const super::vfs::UIO,
         _c: super::vfs::UserCred,
-        _vp: *const VNode,
+        _vp: NonNull<VNode>,
     ) {
         todo!()
     }
 
-    fn fsync(&mut self, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn fsync(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!()
     }
 
-    fn inactive(&mut self, _c: super::vfs::UserCred, _vp: *const VNode) {
+    fn inactive(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!()
     }
 
-    fn bmap(&mut self, _block_number: u32, _bnp: (), _vp: *const VNode) -> super::vfs::VNode {
+    fn bmap(&mut self, _block_number: u32, _bnp: (), _vp: NonNull<VNode>) -> super::vfs::VNode {
         todo!()
     }
 
-    fn strategy(&mut self, _bp: (), _vp: *const VNode) {
+    fn strategy(&mut self, _bp: (), _vp: NonNull<VNode>) {
         todo!()
     }
 
-    fn bread(&mut self, _block_number: u32, _vp: *const VNode) -> Arc<[u8]> {
+    fn bread(&mut self, _block_number: u32, _vp: NonNull<VNode>) -> Arc<[u8]> {
         todo!()
     }
 }

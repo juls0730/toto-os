@@ -432,14 +432,14 @@ impl ATABus {
                 ATADriveDirection::Read => unsafe {
                     insw(
                         self.io_bar + ATADriveDataRegister::Data as u16,
-                        (buffer.as_mut_ptr() as *mut u16).add(buffer_offset),
+                        (buffer.as_mut_ptr().cast::<u16>()).add(buffer_offset),
                         ATA_SECTOR_SIZE / size_of::<u16>(),
                     );
                 },
                 ATADriveDirection::Write => unsafe {
                     outsw(
                         self.io_bar + ATADriveDataRegister::Data as u16,
-                        (buffer.as_mut_ptr() as *mut u16).add(buffer_offset),
+                        (buffer.as_mut_ptr().cast::<u16>()).add(buffer_offset),
                         ATA_SECTOR_SIZE / size_of::<u16>(),
                     )
                 },
@@ -502,7 +502,7 @@ impl ATADrive {
     fn sector_count(&self) -> u64 {
         let sectors = self.identify_data[120..].as_ptr();
 
-        return unsafe { *(sectors as *const u32) } as u64;
+        return unsafe { *(sectors.cast::<u32>()) } as u64;
     }
 
     pub fn as_ptr(&self) -> *const ATADrive {
@@ -524,7 +524,7 @@ impl BlockDevice for ATADrive {
     fn sector_count(&self) -> u64 {
         let sectors = self.identify_data[120..].as_ptr();
 
-        return unsafe { *(sectors as *const u32) } as u64;
+        return unsafe { *(sectors.cast::<u32>()) } as u64;
     }
 
     fn write(&self, sector: u64, buffer: &[u8]) -> Result<(), ()> {
@@ -542,7 +542,6 @@ static DRIVES: Mutex<Vec<ATADrive>> = Mutex::new(Vec::new());
 
 // TODO: This code is pretty much just the C from @Moldytzu's mOS
 // This code could probably be made better and more device agnostic
-// But that's TODO obviously
 fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
     let mut drives_lock = DRIVES.lock();
     let io_port_base = bar0 as u16;

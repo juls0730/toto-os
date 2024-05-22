@@ -103,7 +103,6 @@ exception_function!(0x00, div_error);
 exception_function!(0x06, invalid_opcode);
 exception_function!(0x08, double_fault);
 exception_function!(0x0D, general_protection_fault);
-// TODO: fix the page fault then gracefully return.
 exception_function!(0x0E, page_fault);
 exception_function!(0xFF, generic_handler);
 

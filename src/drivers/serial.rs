@@ -100,7 +100,7 @@ pub fn is_transmit_empty() -> bool {
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 pub fn write_serial(character: u8) {
     unsafe {
-        *UART = character;
+        UART.write(character);
     };
 }
 

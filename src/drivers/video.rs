@@ -32,7 +32,7 @@ impl Framebuffer {
         let pixel_offset = (y * self.pitch as u32 + (x * (self.bpp / 8) as u32)) as isize;
 
         unsafe {
-            *(self.pointer.offset(pixel_offset) as *mut u32) = color;
+            *(self.pointer.offset(pixel_offset).cast::<u32>()) = color;
         }
     }
 
@@ -43,21 +43,25 @@ impl Framebuffer {
 
         unsafe {
             if let Some(mirror_buffer) = mirror_buffer {
-                crate::mem::memset32(mirror_buffer.pointer as *mut u32, color, buffer_size);
+                crate::mem::memset32(mirror_buffer.pointer.cast::<u32>(), color, buffer_size);
             }
 
-            crate::mem::memset32(self.pointer as *mut u32, color, buffer_size);
+            crate::mem::memset32(self.pointer.cast::<u32>(), color, buffer_size);
         }
     }
 
     pub fn blit_screen(&self, buffer: &mut [u32], mirror_buffer: Option<Self>) {
         unsafe {
-            core::ptr::copy_nonoverlapping(buffer.as_ptr(), self.pointer as *mut u32, buffer.len());
+            core::ptr::copy_nonoverlapping(
+                buffer.as_ptr(),
+                self.pointer.cast::<u32>(),
+                buffer.len(),
+            );
 
             if let Some(mirror_buffer) = mirror_buffer {
                 core::ptr::copy_nonoverlapping(
                     buffer.as_ptr(),
-                    mirror_buffer.pointer as *mut u32,
+                    mirror_buffer.pointer.cast::<u32>(),
                     buffer.len(),
                 );
             }
