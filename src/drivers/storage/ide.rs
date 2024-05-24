@@ -1,14 +1,14 @@
 use core::mem::size_of;
 
-use alloc::{boxed::Box, format, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use crate::{
     arch::io::{inb, insw, inw, outb, outsw},
     drivers::{
-        fs::fat,
-        storage::{GPTHeader, GPTPartitionEntry, MBR},
+        fs::{fat, vfs::add_vfs},
+        storage::{GPTHeader, GPTPartitionEntry, Partition, MBR},
     },
-    libs::{mutex::Mutex, uuid::Uuid},
+    libs::{sync::Mutex, uuid::Uuid},
 };
 
 use super::BlockDevice;
@@ -52,19 +52,20 @@ impl core::convert::From<u8> for ATADriveStatus {
     }
 }
 
-#[repr(u8)]
-enum ATADriveError {
-    AddressMarkNotFound = 0x01,
-    Track0NotFound = 0x02,
-    CommandAborted = 0x04,
-    MediaChangeReq = 0x08,
-    IDNotFound = 0x10,
-    MediaChanged = 0x20,
-    UncorrectableData = 0x40,
-    BadBlock = 0x80,
-}
+// #[repr(u8)]
+// enum ATADriveError {
+//     AddressMarkNotFound = 0x01,
+//     Track0NotFound = 0x02,
+//     CommandAborted = 0x04,
+//     MediaChangeReq = 0x08,
+//     IDNotFound = 0x10,
+//     MediaChanged = 0x20,
+//     UncorrectableData = 0x40,
+//     BadBlock = 0x80,
+// }
 
 #[repr(u8)]
+#[allow(dead_code)]
 enum ATADriveCommand {
     ReadPIO = 0x20,
     ReadPIOExt = 0x24,
@@ -81,20 +82,20 @@ enum ATADriveCommand {
     Identify = 0xEC,
 }
 
-#[repr(u8)]
-enum ATADriveIdentifyResponse {
-    DeviceType = 0x00,
-    Cylinders = 0x02,
-    Heads = 0x06,
-    Sectors = 0x0C,
-    Serial = 0x14,
-    Model = 0x36,
-    Capabilities = 0x62,
-    FieldValid = 0x6A,
-    MaxLBA = 0x78,
-    CommandSets = 0xA4,
-    MaxLBAExt = 0xC8,
-}
+// #[repr(u8)]
+// enum ATADriveIdentifyResponse {
+//     DeviceType = 0x00,
+//     Cylinders = 0x02,
+//     Heads = 0x06,
+//     Sectors = 0x0C,
+//     Serial = 0x14,
+//     Model = 0x36,
+//     Capabilities = 0x62,
+//     FieldValid = 0x6A,
+//     MaxLBA = 0x78,
+//     CommandSets = 0xA4,
+//     MaxLBAExt = 0xC8,
+// }
 
 #[repr(u16)]
 enum IDEDriveType {
@@ -126,6 +127,7 @@ enum ATADriveType {
 }
 
 #[repr(u8)]
+#[allow(dead_code)]
 enum ATADriveDataRegister {
     Data = 0x00,
     ErrorAndFeatures = 0x01,
@@ -144,12 +146,14 @@ enum ATADriveDataRegister {
 }
 
 #[repr(u8)]
+#[allow(dead_code)]
 enum ATADriveControlRegister {
     ControlAndAltStatus = 0x02,
     DeviceAddress = 0x03,
 }
 
 #[repr(u8)]
+#[allow(dead_code)]
 enum ATADriveChannels {
     Primary = 0x00,
     Secondary = 0x01,
@@ -292,7 +296,7 @@ impl ATABus {
         sector_count: usize,
     ) -> Result<Arc<[u8]>, ()> {
         let mut buffer: Vec<u8> = Vec::with_capacity(ATA_SECTOR_SIZE * sector_count);
-        unsafe { buffer.set_len(buffer.capacity()) };
+        buffer.resize(buffer.capacity(), 0);
 
         self.ide_access(
             drive,
@@ -428,14 +432,14 @@ impl ATABus {
                 ATADriveDirection::Read => unsafe {
                     insw(
                         self.io_bar + ATADriveDataRegister::Data as u16,
-                        (buffer.as_mut_ptr() as *mut u16).add(buffer_offset),
+                        (buffer.as_mut_ptr().cast::<u16>()).add(buffer_offset),
                         ATA_SECTOR_SIZE / size_of::<u16>(),
                     );
                 },
                 ATADriveDirection::Write => unsafe {
                     outsw(
                         self.io_bar + ATADriveDataRegister::Data as u16,
-                        (buffer.as_mut_ptr() as *mut u16).add(buffer_offset),
+                        (buffer.as_mut_ptr().cast::<u16>()).add(buffer_offset),
                         ATA_SECTOR_SIZE / size_of::<u16>(),
                     )
                 },
@@ -494,6 +498,16 @@ impl ATADrive {
             drive_type: drive,
         });
     }
+
+    fn sector_count(&self) -> u64 {
+        let sectors = self.identify_data[120..].as_ptr();
+
+        return unsafe { *(sectors.cast::<u32>()) } as u64;
+    }
+
+    pub fn as_ptr(&self) -> *const ATADrive {
+        return core::ptr::addr_of!(*self);
+    }
 }
 
 impl BlockDevice for ATADrive {
@@ -510,7 +524,7 @@ impl BlockDevice for ATADrive {
     fn sector_count(&self) -> u64 {
         let sectors = self.identify_data[120..].as_ptr();
 
-        return unsafe { *(sectors as *const u32) } as u64;
+        return unsafe { *(sectors.cast::<u32>()) } as u64;
     }
 
     fn write(&self, sector: u64, buffer: &[u8]) -> Result<(), ()> {
@@ -528,8 +542,8 @@ static DRIVES: Mutex<Vec<ATADrive>> = Mutex::new(Vec::new());
 
 // TODO: This code is pretty much just the C from @Moldytzu's mOS
 // This code could probably be made better and more device agnostic
-// But that's TODO obviously
 fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
+    let mut drives_lock = DRIVES.lock();
     let io_port_base = bar0 as u16;
     let control_port_base = bar1 as u16;
 
@@ -545,20 +559,20 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
         let drive = ATADrive::new(bus.clone(), drive_type);
 
         if let Ok(drive) = drive {
-            DRIVES.lock().write().push(drive);
+            drives_lock.push(drive);
         }
     }
 
     crate::log_info!(
         "ATA: Detected {} drive{}",
-        DRIVES.lock().read().len(),
-        match DRIVES.lock().read().len() {
+        drives_lock.len(),
+        match drives_lock.len() {
             1 => "",
             _ => "s",
         }
     );
 
-    for drive in DRIVES.lock().read().iter() {
+    for drive in drives_lock.iter() {
         let sectors = drive.sector_count();
 
         crate::log_info!(
@@ -586,8 +600,7 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
 
         let gpt = GPTHeader::new(&array);
 
-        let mut partitions: Vec<GPTPartitionEntry> =
-            Vec::with_capacity(gpt.partition_entry_count as usize);
+        let mut partitions: Vec<Partition> = Vec::with_capacity(gpt.partition_entry_count as usize);
 
         let partition_sector = drive
             .read(
@@ -647,52 +660,59 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
                 .unwrap();
 
             // Store the parsed information in the partition_entries array
-            partitions.push(GPTPartitionEntry {
-                partition_type_guid,
-                unique_partition_guid,
-                start_sector,
-                end_sector,
-                attributes,
-                partition_name,
-            });
+            partitions.push(Partition::GPTPartition((
+                GPTPartitionEntry {
+                    partition_type_guid,
+                    unique_partition_guid,
+                    start_sector,
+                    end_sector,
+                    attributes,
+                    partition_name,
+                },
+                drive.as_ptr(),
+            )));
         }
 
         for &partition in partitions.iter() {
-            if partition.partition_type_guid != "C12A7328-F81F-11D2-BA4B-00A0C93EC93B" {
-                continue;
+            match partition {
+                Partition::GPTPartition(gpt_partition) => {
+                    if gpt_partition.0.partition_type_guid != "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+                    {
+                        continue;
+                    }
+
+                    let fat_fs = fat::FatFs::new(partition);
+
+                    if fat_fs.is_err() {
+                        continue;
+                    }
+
+                    let fat_fs = fat_fs.unwrap();
+
+                    // TODO
+                    let _ = add_vfs("/mnt", Box::new(fat_fs));
+
+                    // let vfs = crate::drivers::fs::vfs::Vfs::new(
+                    //     Box::new(fat_fs),
+                    //     &format!("{}", gpt_partition.0.partition_type_guid),
+                    // );
+
+                    // crate::drivers::fs::vfs::VFS_INSTANCES.lock().push(vfs);
+
+                    // crate::println!(
+                    //     "{:?}",
+                    //     crate::drivers::fs::vfs::VFS_INSTANCES
+                    //         .lock()
+                    //         .read()
+                    //         .last()
+                    //         .unwrap()
+                    //         .open("/example.txt")
+                    //         .unwrap()
+                    //         .read()
+                    // );
+                }
+                _ => todo!("Handle MBR!"),
             }
-
-            let fat_fs = fat::FatFs::new(drive, partition);
-
-            if fat_fs.is_err() {
-                continue;
-            }
-
-            let fat_fs = fat_fs.unwrap();
-
-            let vfs = crate::drivers::fs::vfs::Vfs::new(
-                Box::new(fat_fs),
-                &format!("{}", partition.partition_type_guid),
-            );
-
-            crate::drivers::fs::vfs::VFS_INSTANCES
-                .lock()
-                .write()
-                .push(vfs);
-
-            crate::println!(
-                "{:?}",
-                crate::drivers::fs::vfs::VFS_INSTANCES
-                    .lock()
-                    .read()
-                    .last()
-                    .unwrap()
-                    .open("/example.txt")
-                    .unwrap()
-                    .read()
-            );
         }
-
-        crate::println!("{:X?}", partitions);
     }
 }

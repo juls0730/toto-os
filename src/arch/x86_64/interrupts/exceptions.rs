@@ -1,5 +1,5 @@
 use super::idt_set_gate;
-use crate::libs::util::hcf;
+use crate::hcf;
 use crate::{log_error, log_info};
 
 #[repr(C)]
@@ -77,42 +77,36 @@ extern "C" fn exception_handler(registers: u64) {
 
 // *macro intensifies*
 macro_rules! exception_function {
-    ($code:expr, $handler:ident, $recoverable:literal) => {
+    ($code:expr, $handler:ident) => {
         #[inline(always)]
         extern "C" fn $handler() {
-            crate::arch::push_gprs();
-
             unsafe {
                 core::arch::asm!(
+                    "pushfq",
                     "push {0:r}",
                     "mov rdi, rsp",
                     "call {1}",
                     "pop {0:r}",
                     "mov rsp, rdi",
+                    "popfq",
                     in(reg) $code,
                     sym exception_handler,
                 );
             };
 
-            if $recoverable {
-                crate::println!("TODO: Recover gracefully ;~;");
-                hcf();
-            } else {
-                hcf();
-            }
+            hcf();
         }
     };
 }
 
-exception_function!(0x00, div_error, true);
-exception_function!(0x06, invalid_opcode, true);
-exception_function!(0x08, double_fault, false);
-exception_function!(0x0D, general_protection_fault, true);
-// TODO: fix the page fault then gracefully return.
-exception_function!(0x0E, page_fault, false);
-exception_function!(0xFF, generic_handler, true);
+exception_function!(0x00, div_error);
+exception_function!(0x06, invalid_opcode);
+exception_function!(0x08, double_fault);
+exception_function!(0x0D, general_protection_fault);
+exception_function!(0x0E, page_fault);
+exception_function!(0xFF, generic_handler);
 
-pub fn set_exceptions() {
+pub fn exceptions_init() {
     for i in 0..32 {
         idt_set_gate(i, generic_handler as usize);
     }

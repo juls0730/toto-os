@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use crate::{
     arch::io::{inl, outl},
-    libs::mutex::Mutex,
+    libs::sync::Mutex,
 };
 
 const PCI_CONFIG_PORT: u16 = 0xCF8; // The base I/O port for PCI configuration access
@@ -77,6 +77,7 @@ pub fn _get_pci_bar_addresses(bus: u8, device: u8, func: u8) -> (u32, u32, u32, 
     (bar0, bar1, bar2, bar3, bar4, bar5)
 }
 
+#[derive(Debug)]
 pub struct PciDevice {
     pub bus: u8,
     pub device: u8,
@@ -130,7 +131,7 @@ pub fn enumerate_pci_bus() {
     }
 
     crate::println!("====== PCI DEVICES ======");
-    for (i, pci_device) in PCI_DEVICES.lock().read().iter().enumerate() {
+    for (i, pci_device) in PCI_DEVICES.lock().iter().enumerate() {
         crate::println!("Entry {i:2}: {pci_device}")
     }
 }
@@ -165,10 +166,7 @@ fn check_device(bus: u8, device: u8) {
 }
 
 fn check_function(bus: u8, device: u8, func: u8) {
-    PCI_DEVICES
-        .lock()
-        .write()
-        .push(PciDevice::new(bus, device, func));
+    PCI_DEVICES.lock().push(PciDevice::new(bus, device, func));
 
     let _secondary_bus: u8;
 

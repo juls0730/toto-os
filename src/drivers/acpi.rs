@@ -1,9 +1,13 @@
 use alloc::vec::Vec;
+use limine::SmpRequest;
 
 use crate::{
     arch::io::{inw, outb},
-    libs::oncecell::OnceCell,
+    libs::cell::OnceCell,
+    mem::HHDM_OFFSET,
 };
+
+pub static SMP_REQUEST: SmpRequest = SmpRequest::new(0);
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
@@ -28,16 +32,20 @@ pub struct SDT<'a, T> {
 }
 
 impl<'a, T> SDT<'a, T> {
-    unsafe fn new(ptr: *const u8) -> Self {
+    unsafe fn new(mut ptr: *const u8) -> Self {
+        ptr = ptr.add(*HHDM_OFFSET);
+
         let length = core::ptr::read_unaligned(ptr.add(4).cast::<u32>());
         let data = core::slice::from_raw_parts(ptr, length as usize);
 
-        crate::log_serial!("SDT at: {ptr:p}");
+        crate::log_serial!("SDT at: {ptr:p}\n");
 
         assert!(data.len() == length as usize);
 
-        let header: &SDTHeader = core::mem::transmute(data[0..].as_ptr());
-        let inner: &T = core::mem::transmute(data[core::mem::size_of::<SDTHeader>()..].as_ptr());
+        let header: &SDTHeader = &*data[0..].as_ptr().cast::<SDTHeader>();
+        let inner: &T = &*data[core::mem::size_of::<SDTHeader>()..]
+            .as_ptr()
+            .cast::<T>();
         let mut extra = None;
 
         if length as usize > core::mem::size_of::<SDTHeader>() + core::mem::size_of::<T>() {
@@ -94,15 +102,15 @@ enum RootSDT<'a> {
 impl<'a> RootSDT<'a> {
     fn header(&self) -> SDTHeader {
         return match self {
-            RootSDT::RSDT(RSDT) => *RSDT.header,
-            RootSDT::XSDT(XSDT) => *XSDT.header,
+            RootSDT::RSDT(rsdt) => *rsdt.header,
+            RootSDT::XSDT(xsdt) => *xsdt.header,
         };
     }
 
     fn len(&self) -> usize {
         let ptr_size = match self {
-            &RootSDT::RSDT(_) => 4,
-            &RootSDT::XSDT(_) => 8,
+            RootSDT::RSDT(_) => 4,
+            RootSDT::XSDT(_) => 8,
         };
 
         return (self.header().length as usize - core::mem::size_of::<SDTHeader>()) / ptr_size;
@@ -112,20 +120,20 @@ impl<'a> RootSDT<'a> {
         let mut offset = 0;
 
         let root_ptr = match self {
-            RootSDT::RSDT(RSDT) => {
-                let ptrs = RSDT.inner.pointers as *const u8;
+            RootSDT::RSDT(rsdt) => {
+                let ptrs = rsdt.inner.pointers as *const u8;
                 assert!(!ptrs.is_null());
                 ptrs.add(offset)
             }
-            RootSDT::XSDT(XSDT) => {
-                let ptrs = XSDT.inner.pointers as *const u8;
+            RootSDT::XSDT(xsdt) => {
+                let ptrs = xsdt.inner.pointers as *const u8;
                 assert!(!ptrs.is_null());
                 ptrs.add(offset)
             }
         };
 
         for _ in 0..idx {
-            let header: &SDTHeader = core::mem::transmute(root_ptr.add(offset).cast::<SDTHeader>());
+            let header: &SDTHeader = &*root_ptr.add(offset).cast::<SDTHeader>();
             offset += header.length as usize;
         }
 
@@ -165,8 +173,7 @@ fn resolve_acpi() {
         .map(|i| {
             let sdt_ptr = unsafe { root_sdt.get(i) };
             let signature = unsafe { core::slice::from_raw_parts(sdt_ptr, 4) };
-            let ret = signature.try_into().unwrap();
-            ret
+            signature.try_into().unwrap()
         })
         .collect();
 
@@ -254,9 +261,9 @@ pub fn init_acpi() {
 
     crate::log_ok!("Found {} ACPI Tables!", ACPI.tables.len());
 
-    crate::log_serial!("Available serial tables:");
+    crate::log_serial!("Available serial tables:\n");
     for i in 0..ACPI.tables.len() {
-        crate::log_serial!("    {}", core::str::from_utf8(&ACPI.tables[i]).unwrap())
+        crate::log_serial!("    {}\n", core::str::from_utf8(&ACPI.tables[i]).unwrap());
     }
 
     let fadt = find_table::<FADT>("FACP").expect("Failed to find FADT");
@@ -265,11 +272,9 @@ pub fn init_acpi() {
 
     while inw(fadt.inner.pm1a_control_block as u16) & 1 == 0 {}
 
-    crate::arch::interrupts::PICS.lock().write().disable();
-
-    *crate::arch::apic::APIC.lock().write() =
-        Some(crate::arch::apic::APIC::new().expect("Failed to enable APIC!"));
-
+    #[cfg(target_arch = "x86_64")]
+    crate::arch::interrupts::apic::APIC
+        .set(crate::arch::interrupts::apic::APIC::new().expect("Failed to enable APIC!"));
     crate::log_ok!("APIC enabled!");
 }
 

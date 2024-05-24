@@ -1,12 +1,31 @@
 #![no_std]
 #![no_main]
 
-// use alloc::format;
+// extern crate alloc;
 
-// // piggyback off of the CappuccinOS allocator
-// // TODO: make a malloc lib for memory operations
-// #[allow(unused_imports)]
-// use CappuccinOS;
+// use core::alloc::GlobalAlloc;
+
+// use alloc::{borrow::ToOwned, format, string::String};
+
+// struct Allocator;
+
+// unsafe impl GlobalAlloc for Allocator {
+//     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+//         return malloc(layout.size());
+//     }
+
+//     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+//         free(ptr, layout.size());
+//     }
+// }
+
+// #[global_allocator]
+// static ALLOC: Allocator = Allocator;
+
+// extern "C" {
+//     fn malloc(size: usize) -> *mut u8;
+//     fn free(ptr: *mut u8, size: usize);
+// }
 
 #[no_mangle]
 pub fn _start(_args: &[&str]) {

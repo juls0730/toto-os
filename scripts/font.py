@@ -4,6 +4,7 @@ def create_psf2_file(font_data, psf2_file_path):
     magic_bytes = b'\x72\xB5\x4A\x86'
     version = 0
     header_size = 32
+    # means theres a unicode table
     flags = 0x00000001
     num_glyphs = len(font_data)
     height = 16
@@ -20,6 +21,7 @@ def create_psf2_file(font_data, psf2_file_path):
         psf2_file.write(psf2_file_content)
 
 if __name__ == "__main__":
+    # TODO: maybe dont just dump a bunch of hex in here idk
     font_data = [
         [0x00, 0x00, 0x7E, 0x81, 0x99, 0xA5, 0x85, 0x89, 0x89, 0x81, 0x89, 0x7E, 0x00, 0x00, 0x00, 0x00],
         [0x00, 0x00, 0x7E, 0x81, 0xA5, 0x81, 0x81, 0xBD, 0x99, 0x81, 0x81, 0x7E, 0x00, 0x00, 0x00, 0x00],

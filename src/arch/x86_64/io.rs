@@ -10,7 +10,6 @@ pub fn outb(port: u16, value: u8) {
             options(preserves_flags, nomem, nostack)
         );
     }
-    return;
 }
 
 #[inline(always)]
@@ -24,7 +23,8 @@ pub fn inb(port: u16) -> u8 {
             options(preserves_flags, nomem, nostack)
         );
     }
-    return value;
+
+    value
 }
 
 #[inline(always)]
@@ -50,7 +50,8 @@ pub fn inw(port: u16) -> u16 {
             options(preserves_flags, nomem, nostack)
         );
     }
-    return value;
+
+    value
 }
 
 /// Reads `count` 16-bit values from the specified `port` into the `buffer`.
@@ -60,14 +61,27 @@ pub fn inw(port: u16) -> u16 {
 /// This function panics if the supplied buffer's size is smaller than `count`.
 #[inline(always)]
 pub unsafe fn insw(port: u16, buffer: *mut u16, count: usize) {
-    unsafe {
-        asm!("cld",
-            "rep insw",
-            in("dx") port,
-            inout("rdi") buffer => _,
-            inout("rcx") count => _
-        );
-    }
+    asm!("cld",
+        "rep insw",
+        in("dx") port,
+        inout("rdi") buffer => _,
+        inout("rcx") count => _
+    );
+}
+
+/// Outputs `count` 8-bit values from the specified `port` into the `buffer`.
+///
+/// # Safety
+///
+/// This function panics if the supplied buffer's size is smaller than `count`.
+#[inline(always)]
+pub unsafe fn outsb(port: u16, buffer: *const u8, count: usize) {
+    asm!("cld",
+        "rep outsb",
+        in("dx") port,
+        inout("rsi") buffer => _,
+        inout("rcx") count => _
+    );
 }
 
 /// Outputs `count` 16-bit values from the specified `port` into the `buffer`.
@@ -76,15 +90,13 @@ pub unsafe fn insw(port: u16, buffer: *mut u16, count: usize) {
 ///
 /// This function panics if the supplied buffer's size is smaller than `count`.
 #[inline(always)]
-pub unsafe fn outsw(port: u16, buffer: *mut u16, count: usize) {
-    unsafe {
-        asm!("cld",
-            "rep outsw",
-            in("dx") port,
-            inout("rsi") buffer => _,
-            inout("rcx") count => _
-        );
-    }
+pub unsafe fn outsw(port: u16, buffer: *const u16, count: usize) {
+    asm!("cld",
+        "rep outsw",
+        in("dx") port,
+        inout("rsi") buffer => _,
+        inout("rcx") count => _
+    );
 }
 
 #[inline(always)]
@@ -110,7 +122,8 @@ pub fn inl(port: u16) -> u32 {
             options(preserves_flags, nomem, nostack)
         );
     }
-    return value;
+
+    value
 }
 
 #[inline(always)]

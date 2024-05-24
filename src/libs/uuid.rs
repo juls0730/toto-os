@@ -29,7 +29,7 @@ impl PartialEq for Uuid {
 
 impl PartialEq<&str> for Uuid {
     fn eq(&self, other: &&str) -> bool {
-        let parts = other.split("-").collect::<Vec<&str>>();
+        let parts = other.split('-').collect::<Vec<&str>>();
 
         if parts.len() != 5 {
             return false;

@@ -1,8 +1,4 @@
-pub mod elf;
-pub mod lazy;
-pub mod logging;
-pub mod math;
-pub mod mutex;
-pub mod oncecell;
-pub mod util;
+pub mod cell;
+pub mod gzip;
+pub mod sync;
 pub mod uuid;

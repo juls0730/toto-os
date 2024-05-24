@@ -1,236 +1,213 @@
-// Original code from: https://github.com/DrChat/buddyalloc/blob/master/src/heap.rs
-// But I made it ~~much worse~~ *better* by making it GlobalAlloc compatible
-// By using A custom Mutex implementation (which also sucks) and dereferencing all the pointers,
-// I was able to remove all the mut's In the original code.
+use core::{
+    alloc::{GlobalAlloc, Layout},
+    ptr::NonNull,
+};
 
-// TODO: Replace this with a slab allocator that can take advantage of the page frame allocator
+use crate::{libs::sync::Mutex, mem::pmm::PAGE_SIZE};
 
-use core::alloc::{GlobalAlloc, Layout};
-use core::cmp::{max, min};
-use core::ptr;
-use core::sync::atomic::Ordering::SeqCst;
-use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize};
+use super::{align_up, HHDM_OFFSET};
 
-use crate::libs::mutex::Mutex;
+#[derive(Debug)]
+struct MemNode {
+    next: Option<NonNull<Self>>,
+    size: usize,
+}
 
-const fn log2(num: usize) -> u8 {
-    let mut temp = num;
-    let mut result = 0;
-
-    temp >>= 1;
-
-    while temp != 0 {
-        result += 1;
-        temp >>= 1;
+impl MemNode {
+    const fn new(size: usize) -> Self {
+        Self { next: None, size }
     }
 
-    return result;
-}
+    pub fn addr(&self) -> usize {
+        self as *const Self as usize
+    }
 
-const MIN_HEAP_ALIGN: usize = 4096;
-const HEAP_BLOCKS: usize = 16;
+    pub fn end_addr(&self) -> usize {
+        self.addr() + self.len()
+    }
 
-pub struct FreeBlock {
-    next: *mut FreeBlock,
-}
-
-impl FreeBlock {
-    #[inline]
-    const fn new(next: *mut FreeBlock) -> Self {
-        Self { next }
+    pub fn len(&self) -> usize {
+        self.size
     }
 }
 
-pub struct BuddyAllocator {
-    pub heap_start: AtomicPtr<u8>,
-    heap_size: AtomicUsize,
-    free_lists: Mutex<[*mut FreeBlock; HEAP_BLOCKS]>,
-    min_block_size: AtomicUsize,
-    min_block_size_log2: AtomicU8,
+pub struct LinkedListAllocator {
+    head: MemNode,
 }
 
-impl BuddyAllocator {
-    pub const fn new_unchecked(heap_start: *mut u8, heap_size: usize) -> Self {
-        let min_block_size_raw = heap_size >> (HEAP_BLOCKS - 1);
-        let min_block_size = AtomicUsize::new(min_block_size_raw);
-        let mut free_lists_buf: [*mut FreeBlock; HEAP_BLOCKS] = [ptr::null_mut(); HEAP_BLOCKS];
+unsafe impl Sync for LinkedListAllocator {}
 
-        free_lists_buf[HEAP_BLOCKS - 1] = heap_start as *mut FreeBlock;
-
-        let free_lists: Mutex<[*mut FreeBlock; HEAP_BLOCKS]> = Mutex::new(free_lists_buf);
-
-        let heap_start = AtomicPtr::new(heap_start);
-        let heap_size = AtomicUsize::new(heap_size);
-
+impl LinkedListAllocator {
+    pub const fn new() -> Self {
         Self {
-            heap_start,
-            heap_size,
-            free_lists,
-            min_block_size,
-            min_block_size_log2: AtomicU8::new(log2(min_block_size_raw)),
+            head: MemNode::new(0),
         }
     }
 
-    fn allocation_size(&self, mut size: usize, align: usize) -> Option<usize> {
-        if !align.is_power_of_two() {
-            return None;
-        }
-
-        if align > MIN_HEAP_ALIGN {
-            return None;
-        }
-
-        if align > size {
-            size = align;
-        }
-
-        size = max(size, self.min_block_size.load(SeqCst));
-
-        size = size.next_power_of_two();
-
-        if size > self.heap_size.load(SeqCst) {
-            return None;
-        }
-
-        return Some(size);
-    }
-
-    fn allocation_order(&self, size: usize, align: usize) -> Option<usize> {
-        return self
-            .allocation_size(size, align)
-            .map(|s| (log2(s) - self.min_block_size_log2.load(SeqCst)) as usize);
-    }
-
-    #[inline]
-    fn order_size(&self, order: usize) -> usize {
-        return 1 << (self.min_block_size_log2.load(SeqCst) as usize + order);
-    }
-
-    fn free_list_pop(&self, order: usize) -> Option<*mut u8> {
-        let candidate = (*self.free_lists.lock().read())[order];
-
-        if candidate.is_null() {
-            return None;
-        }
-
-        if order != self.free_lists.lock().read().len() - 1 {
-            (*self.free_lists.lock().write())[order] = unsafe { (*candidate).next };
-        } else {
-            (*self.free_lists.lock().write())[order] = ptr::null_mut();
-        }
-
-        return Some(candidate as *mut u8);
-    }
-
-    fn free_list_insert(&self, order: usize, block: *mut u8) {
-        let free_block_ptr = block as *mut FreeBlock;
-
-        unsafe { *free_block_ptr = FreeBlock::new((*self.free_lists.lock().read())[order]) };
-
-        (*self.free_lists.lock().write())[order] = free_block_ptr;
-    }
-
-    fn free_list_remove(&self, order: usize, block: *mut u8) -> bool {
-        let block_ptr = block as *mut FreeBlock;
-
-        let mut checking: &mut *mut FreeBlock = &mut (*self.free_lists.lock().write())[order];
-
+    pub fn init(&mut self, pages: usize) {
         unsafe {
-            while !(*checking).is_null() {
-                if *checking == block_ptr {
-                    *checking = (*(*checking)).next;
-                    return true;
-                }
+            self.add_free_region(
+                super::PHYSICAL_MEMORY_MANAGER
+                    .alloc(pages)
+                    .add(*HHDM_OFFSET),
+                PAGE_SIZE * pages,
+            );
+        }
+    }
 
-                checking = &mut ((*(*checking)).next);
+    unsafe fn add_free_region(&mut self, addr: *mut u8, size: usize) {
+        assert_eq!(
+            align_up(addr as usize, core::mem::align_of::<MemNode>()),
+            addr as usize
+        );
+        assert!(size >= core::mem::size_of::<MemNode>());
+
+        let mut target_node = &mut self.head;
+
+        while let Some(mut next_node) = target_node.next {
+            if next_node.as_ref().addr() > addr as usize {
+                break;
+            }
+
+            target_node = next_node.as_mut()
+        }
+
+        let mut node = MemNode::new(size);
+        node.next = target_node.next.take();
+
+        addr.cast::<MemNode>().write(node);
+        target_node.next = Some(NonNull::new_unchecked(addr.cast::<MemNode>()));
+    }
+
+    unsafe fn coalesce_memory(&mut self) {
+        let mut current_node = &mut self.head;
+
+        while let Some(mut next) = current_node.next {
+            let next = next.as_mut();
+
+            if current_node.end_addr() == next.addr() {
+                let new_size = current_node.size + next.size;
+
+                current_node.size = new_size;
+                current_node.next = next.next.take();
+            } else {
+                current_node = next;
             }
         }
-        return false;
     }
 
-    fn split_free_block(&self, block: *mut u8, mut order: usize, order_needed: usize) {
-        let mut size_to_split = self.order_size(order);
+    fn alloc_from_node(node: &MemNode, layout: Layout) -> *mut u8 {
+        let start = align_up(node.addr(), layout.align());
+        let end = start + layout.size();
 
-        while order > order_needed {
-            size_to_split >>= 1;
-            order -= 1;
-
-            let split = unsafe { block.add(size_to_split) };
-            self.free_list_insert(order, split);
+        if end > node.end_addr() {
+            // aligned address goes outside the bounds of the node
+            return core::ptr::null_mut();
         }
-    }
 
-    fn buddy(&self, order: usize, block: *mut u8) -> Option<*mut u8> {
-        assert!(block >= self.heap_start.load(SeqCst));
-
-        let relative = unsafe { block.offset_from(self.heap_start.load(SeqCst)) } as usize;
-        let size = self.order_size(order);
-        if size >= self.heap_size.load(SeqCst) {
-            return None;
-        } else {
-            return Some(unsafe { self.heap_start.load(SeqCst).add(relative ^ size) });
+        let extra = node.end_addr() - end;
+        if extra > 0 && extra < core::mem::size_of::<MemNode>() {
+            // Node size minus allocation size is less than the minimum size needed for a node,
+            // thus, if we let the allocation to happen in this node, we lose track of the extra memory
+            // lost by this allocation
+            return core::ptr::null_mut();
         }
+
+        return start as *mut u8;
     }
 
-    pub fn get_total_mem(&self) -> usize {
-        return self.heap_size.load(SeqCst);
-    }
+    unsafe fn find_region(&mut self, layout: Layout) -> Option<NonNull<MemNode>> {
+        let mut current_node = &mut self.head;
 
-    pub fn get_free_mem(&self) -> usize {
-        let mut free_mem = 0;
+        while let Some(node) = current_node.next.as_mut() {
+            let node = node.as_mut();
 
-        unsafe {
-            for order in 0..self.free_lists.lock().read().len() {
-                let mut block = (*self.free_lists.lock().write())[order];
-
-                while !block.is_null() {
-                    free_mem += self.order_size(order);
-                    block = (*block).next;
-                }
+            if Self::alloc_from_node(node, layout).is_null() {
+                current_node = current_node.next.as_mut().unwrap().as_mut();
+                continue;
             }
+
+            // `node` is suitable for this allocation
+            let next = node.next.take();
+            let ret = Some(current_node.next.take().unwrap());
+            current_node.next = next;
+            return ret;
         }
 
-        return free_mem;
+        return None;
     }
 
-    pub fn get_used_mem(&self) -> usize {
-        return self.get_total_mem() - self.get_free_mem();
+    pub fn count_reginos(&self) -> usize {
+        let mut region_count = 0;
+        let mut cur_region = &self.head;
+
+        while let Some(next) = cur_region.next {
+            cur_region = unsafe { next.as_ref() };
+            region_count += 1;
+        }
+
+        region_count
+    }
+
+    pub fn debug_regions(&self, buf: &mut [(usize, usize)]) {
+        let mut i = 0;
+        let mut cur_region = &self.head;
+        buf[i] = (cur_region.addr(), cur_region.end_addr());
+        i += 1;
+
+        while let Some(next) = cur_region.next {
+            cur_region = unsafe { next.as_ref() };
+            buf[i] = (cur_region.addr(), cur_region.end_addr());
+            i += 1;
+        }
+    }
+
+    fn size_align(layout: Layout) -> Layout {
+        let layout = layout
+            .align_to(core::mem::align_of::<MemNode>())
+            .expect("Failed to align allocation")
+            .pad_to_align();
+
+        let size = layout.size().max(core::mem::size_of::<MemNode>());
+        return Layout::from_size_align(size, layout.align()).expect("Failed to create layout");
+    }
+
+    unsafe fn inner_alloc(&mut self, layout: Layout) -> *mut u8 {
+        let layout = Self::size_align(layout);
+
+        if let Some(region) = self.find_region(layout) {
+            // immutable pointers are a government conspiracy anyways
+            let end = (region.as_ref().addr() + layout.size()) as *mut u8;
+            let extra = region.as_ref().end_addr() - end as usize;
+
+            if extra > 0 {
+                self.add_free_region(end, extra)
+            }
+
+            return region.as_ref().addr() as *mut u8;
+        }
+
+        return core::ptr::null_mut();
+    }
+
+    unsafe fn inner_dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+        let layout = Self::size_align(layout);
+
+        self.add_free_region(ptr, layout.size());
+        self.coalesce_memory();
     }
 }
 
-unsafe impl GlobalAlloc for BuddyAllocator {
+unsafe impl GlobalAlloc for Mutex<LinkedListAllocator> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if let Some(order_needed) = self.allocation_order(layout.size(), layout.align()) {
-            for order in order_needed..self.free_lists.lock().read().len() {
-                if let Some(block) = self.free_list_pop(order) {
-                    if order > order_needed {
-                        self.split_free_block(block, order, order_needed);
-                    }
+        let mut allocator = self.lock();
 
-                    return block;
-                }
-            }
-        }
-
-        return ptr::null_mut();
+        allocator.inner_alloc(layout)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let initial_order = self
-            .allocation_order(layout.size(), layout.align())
-            .expect("Tried to dispose of invalid block");
+        let mut allocator = self.lock();
 
-        let mut block = ptr;
-        for order in initial_order..self.free_lists.lock().read().len() {
-            if let Some(buddy) = self.buddy(order, block) {
-                if self.free_list_remove(order, block) {
-                    block = min(block, buddy);
-                    continue;
-                }
-            }
-
-            self.free_list_insert(order, block);
-            return;
-        }
+        allocator.inner_dealloc(ptr, layout);
     }
 }

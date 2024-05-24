@@ -21,14 +21,17 @@ static EXTENDED_KEY: AtomicBool = AtomicBool::new(false);
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub extern "x86-interrupt" fn keyboard_interrupt_handler() {
-    interrupts::signal_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+    use crate::drivers::serial::write_serial;
+
+    interrupts::signal_end_of_interrupt();
 
     let scancode = inb(KBD_DATA_PORT);
 
     let key = parse_key(scancode);
 
     if let Some(key) = key {
-        crate::usr::shell::handle_key(key)
+        // crate::usr::shell::handle_key(key)
+        write_serial(key.character.unwrap() as u8);
     }
 }
 

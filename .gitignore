@@ -7,3 +7,6 @@ bx_enh_dbg.ini
 
 # limine
 limine/
+
+# rewrite stuff
+src.bak

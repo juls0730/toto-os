@@ -28,6 +28,16 @@ pub unsafe fn insw(port: u16, buffer: *mut u16, count: usize) {
     return;
 }
 
+/// Outputs `count` 8-bit values from the specified `port` into the `buffer`.
+///
+/// # Safety
+///
+/// This function panics if the supplied buffer's size is smaller than `count`.
+#[inline(always)]
+pub unsafe fn outsb(port: u16, buffer: *const u8, count: usize) {
+    return;
+}
+
 /// Outputs `count` 16-bit values from the specified `port` into the `buffer`.
 ///
 /// # Safety

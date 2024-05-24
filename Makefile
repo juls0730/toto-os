@@ -12,6 +12,7 @@ GDB ?=
 CPUS ?= 1
 # FAT type
 ESP_BITS ?= 32
+EXPORT_SYMBOLS = true
 
 ISO_PATH = ${ARTIFACTS_PATH}/iso_root
 INITRAMFS_PATH = ${ARTIFACTS_PATH}/initramfs
@@ -19,6 +20,7 @@ IMAGE_PATH = ${ARTIFACTS_PATH}/${IMAGE_NAME}
 CARGO_OPTS = --target=src/arch/${ARCH}/${ARCH}-unknown-none.json
 QEMU_OPTS += -m ${MEMORY} -drive id=hd0,format=raw,file=${IMAGE_PATH}
 LIMINE_BOOT_VARIATION = X64
+LIMINE_BRANCH = v7.x-binary
 
 ifeq (${MODE},release)
 	CARGO_OPTS += --release
@@ -53,7 +55,7 @@ ifneq (${UEFI},)
 	endif
 endif
 
-.PHONY: all check run-scripts prepare-bin-files copy-initramfs-files compile-initramfs copy-iso-files build-iso compile-bootloader compile-binaries ovmf clean run build line-count
+.PHONY: all build
 
 all: build
 
@@ -77,32 +79,34 @@ copy-initramfs-files:
 		echo "Hello World from Initramfs" > ${INITRAMFS_PATH}/example.txt
 		echo "Second file for testing" > ${INITRAMFS_PATH}/example2.txt
 		mkdir -p ${INITRAMFS_PATH}/firstdir/seconddirbutlonger/
-		echo "Hell yeah, we getting a working initramfs using a custom squashfs driver!!" > ${INITRAMFS_PATH}/firstdir/seconddirbutlonger/yeah.txt
+		mkdir ${INITRAMFS_PATH}/mnt/
+		echo "Nexted file reads!!" > ${INITRAMFS_PATH}/firstdir/seconddirbutlonger/yeah.txt
 
 compile-initramfs: copy-initramfs-files
 		# Make squashfs without compression temporaily so I can get it working before I have to write a gzip driver
 		mksquashfs ${INITRAMFS_PATH} ${ARTIFACTS_PATH}/initramfs.img ${MKSQUASHFS_OPTS}
 
 run-scripts:
+ifeq (${EXPORT_SYMBOLS},true)
 		nm target/${ARCH}-unknown-none/${MODE}/CappuccinOS.elf > scripts/symbols.table
 		@if [ ! -d "scripts/rustc_demangle" ]; then \
-			echo "Cloning rustc_demangle.py into scripts/rustc_demangle/..."; \
 			git clone "https://github.com/juls0730/rustc_demangle.py" "scripts/rustc_demangle"; \
-		else \
-			echo "Folder scripts/rustc_demangle already exists. Skipping clone."; \
 		fi
 		python scripts/demangle-symbols.py
 		mv scripts/symbols.table ${INITRAMFS_PATH}/
+endif
 
 		python scripts/font.py
 		mv scripts/font.psf ${INITRAMFS_PATH}/
 
-		# python scripts/initramfs-test.py 1000 ${INITRAMFS_PATH}/
+		#python scripts/initramfs-test.py 100 ${INITRAMFS_PATH}/
 
 copy-iso-files:
 		# Limine files
 		mkdir -p ${ISO_PATH}/boot/limine
 		mkdir -p ${ISO_PATH}/EFI/BOOT
+
+		mkdir -p ${ISO_PATH}/mnt
 
 		cp -v limine.cfg limine/limine-bios.sys ${ISO_PATH}/boot/limine
 		cp -v limine/BOOT${LIMINE_BOOT_VARIATION}.EFI ${ISO_PATH}/EFI/BOOT/
@@ -151,12 +155,11 @@ endif
 		sudo losetup -d `cat loopback_dev`
 		rm -rf loopback_dev
 
+# TODO: do something better for the directory checking maybe
 compile-bootloader:
 	@if [ ! -d "limine" ]; then \
 		echo "Cloning Limine into limine/..."; \
-		git clone https://github.com/limine-bootloader/limine.git --branch=v6.x-branch-binary --depth=1; \
-	else \
-		echo "Folder limine already exists. Skipping clone."; \
+		git clone https://github.com/limine-bootloader/limine.git --branch=${LIMINE_BRANCH} --depth=1; \
 	fi
 		make -C limine
 
@@ -172,7 +175,7 @@ ovmf-x86_64: ovmf
 ovmf-riscv64: ovmf
 	mkdir -p ovmf/ovmf-riscv64
 	@if [ ! -d "ovmf/ovmf-riscv64/OVMF.fd" ]; then \
-		cd ovmf/ovmf-riscv64 && curl -o OVMF.fd https://retrage.github.io/edk2-nightly/bin/RELEASERISCV64_VIRT_CODE.fd && dd if=/dev/zero of=OVMF.fd bs=1 count=0 seek=33554432; \
+		cd ovmf/ovmf-riscv64 && curl -o OVMF.fd https://retrage.github.io/edk2-nightly/bin/RELEASERISCV64_VIRT_CODE.fd; \
 	fi
 
 ovmf-aarch64:
@@ -196,7 +199,7 @@ run-aarch64:
 	qemu-system-aarch64 ${QEMU_OPTS} -cpu cortex-a72 -device ramfb -device qemu-xhci -device usb-kbd -boot d
 
 line-count:
-		cloc --quiet --exclude-dir=bin --csv src/ | tail -n 1 | awk -F, '{print $$5}'
+		cloc --quiet --exclude-dir=bin --include-lang=Rust --csv src/ | tail -n 1 | awk -F, '{print $$5}'
 clean:
 		cargo clean
 		rm -rf ${ARTIFACTS_PATH}

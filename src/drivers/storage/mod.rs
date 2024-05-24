@@ -75,6 +75,44 @@ impl MBR {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub enum Partition {
+    MBRPartition((MBRPartition, *const dyn BlockDevice)),
+    GPTPartition((GPTPartitionEntry, *const dyn BlockDevice)),
+}
+
+impl Partition {
+    pub fn read(&self, sector: u64, sector_count: usize) -> Result<Arc<[u8]>, ()> {
+        match self {
+            Partition::GPTPartition((partition, block_device)) => {
+                if partition.start_sector + sector + sector_count as u64 > partition.end_sector {
+                    return Err(());
+                }
+
+                return unsafe {
+                    (**block_device).read(partition.start_sector + sector, sector_count)
+                };
+            }
+            Partition::MBRPartition((partition, block_device)) => {
+                if partition.partition_start_lba as u64 + sector + sector_count as u64
+                    > partition.partition_start_lba as u64 + partition.partition_sectors as u64
+                {
+                    return Err(());
+                }
+
+                return unsafe {
+                    (**block_device)
+                        .read(partition.partition_start_lba as u64 + sector, sector_count)
+                };
+            }
+        }
+    }
+
+    pub fn write(&self, _sector: u64, _data: &[u8]) -> Result<(), ()> {
+        todo!();
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct MBRPartition {
     pub boot_indicator: u8,
     pub partition_start_chs: [u8; 3],
@@ -126,7 +164,7 @@ impl GPTHeader {
         let first_usable_block = u64::from_le_bytes(data[0x28..0x30].try_into().unwrap());
         let last_usable_block = u64::from_le_bytes(data[0x30..0x38].try_into().unwrap());
         let guid_bytes: [u8; 16] = data[0x38..0x48].try_into().unwrap();
-        let guid = guid_bytes.try_into().unwrap();
+        let guid = guid_bytes.into();
         let guid_lba = u64::from_le_bytes(data[0x48..0x50].try_into().unwrap());
         let partition_entry_count = u32::from_le_bytes(data[0x50..0x54].try_into().unwrap());
         let partition_entry_size = u32::from_le_bytes(data[0x54..0x58].try_into().unwrap());

@@ -1,6 +1,8 @@
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
-use crate::drivers::fs::vfs::VfsFileSystem;
+use crate::drivers::fs::vfs::{vfs_open, UserCred};
+
+// use crate::drivers::fs::vfs::VfsFileSystem;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -14,7 +16,7 @@ pub fn print_stack_trace(max_frames: usize, rbp: u64) {
 
     crate::println!("Stack Trace:");
     for _frame in 0..max_frames {
-        if stackframe.is_null() || unsafe { (*stackframe).back.is_null() } {
+        if stackframe.is_null() || unsafe { core::ptr::read_unaligned(stackframe).back.is_null() } {
             break;
         }
 
@@ -44,9 +46,12 @@ pub fn print_stack_trace(max_frames: usize, rbp: u64) {
 }
 
 fn get_function_name(function_address: u64) -> Result<(String, u64), ()> {
-    let symbols_fd = (*crate::drivers::fs::initramfs::INITRAMFS).open("/symbols.table")?;
+    // TODO: dont rely on initramfs being mounted at /
+    let symbols_fd = vfs_open("/symbols.table")?;
 
-    let symbols_table_bytes = symbols_fd.read()?;
+    let symbols_table_bytes = symbols_fd
+        .open(0, UserCred { uid: 0, gid: 0 })
+        .read(0, 0, 0)?;
     let symbols_table = core::str::from_utf8(&symbols_table_bytes).ok().ok_or(())?;
 
     let mut previous_symbol: Option<(&str, u64)> = None;
@@ -82,12 +87,11 @@ fn get_function_name(function_address: u64) -> Result<(String, u64), ()> {
             continue;
         }
 
-        if function_address > previous_symbol.unwrap().1 && function_address < address {
-            // function is previous symbol
-            return Ok((
-                previous_symbol.unwrap().0.to_owned(),
-                address - previous_symbol.unwrap().1,
-            ));
+        if let Some(prev_symbol) = previous_symbol {
+            if function_address > prev_symbol.1 && function_address < address {
+                // function is previous symbol
+                return Ok((prev_symbol.0.to_owned(), address - prev_symbol.1));
+            }
         }
 
         previous_symbol = Some((function_name, address));

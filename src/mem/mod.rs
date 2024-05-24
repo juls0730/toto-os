@@ -1,133 +1,25 @@
 pub mod allocator;
 pub mod pmm;
 
-use core::alloc::GlobalAlloc;
+use crate::libs::{cell::OnceCell, sync::Mutex};
 
-use limine::{MemmapEntry, NonNullPtr};
-
-use crate::{
-    libs::{lazy::Lazy, mutex::Mutex},
-    usr::tty::CONSOLE,
-};
-
-use self::{allocator::BuddyAllocator, pmm::PhysicalMemoryManager};
+use self::{allocator::LinkedListAllocator, pmm::PhysicalMemoryManager};
 
 static MEMMAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0);
 static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
+pub static HHDM_OFFSET: OnceCell<usize> = OnceCell::new();
 
-pub static MEMMAP: Lazy<Mutex<&mut [NonNullPtr<MemmapEntry>]>> = Lazy::new(|| {
-    let memmap_request = MEMMAP_REQUEST
-        .get_response()
-        .get_mut()
-        .expect("Failed to get Memory map!");
+pub static PHYSICAL_MEMORY_MANAGER: OnceCell<PhysicalMemoryManager> = OnceCell::new();
 
-    return Mutex::new(memmap_request.memmap_mut());
-});
-
-pub static HHDM_OFFSET: Lazy<usize> = Lazy::new(|| {
-    let hhdm = HHDM_REQUEST
-        .get_response()
-        .get()
-        .expect("Failed to get Higher Half Direct Map!");
-
-    return hhdm.offset as usize;
-});
-
-pub static PHYSICAL_MEMORY_MANAGER: Lazy<PhysicalMemoryManager> =
-    Lazy::new(PhysicalMemoryManager::new);
-
-pub struct PageAllocator;
-
-unsafe impl core::alloc::Allocator for PageAllocator {
-    fn allocate(
-        &self,
-        layout: core::alloc::Layout,
-    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
-        let pages = layout.size() / 4096 + 1;
-        let ptr = PHYSICAL_MEMORY_MANAGER.alloc(pages);
-
-        if ptr.is_err() {
-            return Err(core::alloc::AllocError);
-        }
-
-        let ptr = ptr.unwrap();
-        let slice: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(ptr, pages) };
-
-        unsafe { Ok(core::ptr::NonNull::new_unchecked(slice)) }
-    }
-
-    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
-        let pages = layout.size() / 4096 + 1;
-
-        PHYSICAL_MEMORY_MANAGER.dealloc(ptr.as_ptr(), pages);
-    }
-}
-pub struct Allocator {
-    pub inner: Lazy<BuddyAllocator>,
+pub fn align_up(addr: usize, align: usize) -> usize {
+    let offset = (addr as *const u8).align_offset(align);
+    addr + offset
 }
 
-unsafe impl GlobalAlloc for Allocator {
-    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        self.inner.alloc(layout)
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-        self.inner.dealloc(ptr, layout)
-    }
-}
-
-const HEAP_PAGES: usize = 4096;
-const HEAP_SIZE: usize = HEAP_PAGES * 1024;
+const HEAP_PAGES: usize = 1024; // 4 MiB heap
 
 #[global_allocator]
-pub static ALLOCATOR: Allocator = Allocator {
-    inner: Lazy::new(|| {
-        let heap_start = PHYSICAL_MEMORY_MANAGER
-            .alloc(HEAP_PAGES)
-            .expect("Failed to allocate heap!");
-
-        BuddyAllocator::new_unchecked(heap_start, HEAP_SIZE)
-    }),
-};
-
-#[no_mangle]
-pub extern "C" fn malloc(size: usize) -> *mut u8 {
-    let layout = core::alloc::Layout::from_size_align(size, 1).unwrap();
-    unsafe { ALLOCATOR.alloc(layout) }
-}
-
-#[no_mangle]
-pub extern "C" fn free(ptr: *mut u8, size: usize) {
-    let layout = core::alloc::Layout::from_size_align(size, 1).unwrap();
-    unsafe {
-        ALLOCATOR.dealloc(ptr, layout);
-    }
-}
-
-pub fn log_info() {
-    crate::log_info!(
-        "Initialized heap with {} of memory at {:#X}",
-        HEAP_SIZE.label_bytes(),
-        ALLOCATOR
-            .inner
-            .heap_start
-            .load(core::sync::atomic::Ordering::SeqCst) as usize
-    );
-
-    if CONSOLE.get_features().doubled_buffered {
-        let row_size = CONSOLE.second_buffer.lock().read().unwrap().pitch
-            / (CONSOLE.second_buffer.lock().read().unwrap().bpp / 8);
-
-        let screen_size = row_size * CONSOLE.second_buffer.lock().read().unwrap().height;
-        crate::log_info!(
-            "Initialized framebuffer mirroring with {} at {:#X}",
-            (screen_size * 4).label_bytes(),
-            CONSOLE.second_buffer.lock().read().unwrap().pointer as usize
-        );
-    }
-
-    log_memory_map();
-}
+pub static ALLOCATOR: Mutex<LinkedListAllocator> = Mutex::new(LinkedListAllocator::new());
 
 pub fn log_memory_map() {
     let memmap_request = MEMMAP_REQUEST.get_response().get_mut();
@@ -137,12 +29,12 @@ pub fn log_memory_map() {
 
     let memmap = memmap_request.unwrap().memmap();
 
-    crate::log_serial!("====== MEMORY MAP ======");
+    crate::log_serial!("====== MEMORY MAP ======\n");
     for entry in memmap.iter() {
         let label = (entry.len as usize).label_bytes();
 
         crate::log_serial!(
-            "[ {:#018X?} ] Type: {:?} Size: {}",
+            "[ {:#018X?} ] Type: {:?} Size: {}\n",
             entry.base..entry.base + entry.len,
             entry.typ,
             label
@@ -150,20 +42,43 @@ pub fn log_memory_map() {
     }
 }
 
-pub struct Label {
-    size: usize,
-    text_label: &'static str,
+pub fn init_allocator() {
+    let mut allocator_lock = ALLOCATOR.lock();
+    allocator_lock.init(HEAP_PAGES);
+
+    drop(allocator_lock);
+
+    crate::println!(
+        "{} of memory available",
+        PHYSICAL_MEMORY_MANAGER.total_memory().label_bytes()
+    )
+}
+
+pub enum Label {
+    BYTE(usize),
+    KIB(usize),
+    MIB(usize),
+    GIB(usize),
 }
 
 impl core::fmt::Display for Label {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        return write!(f, "{}{}", self.size, self.text_label);
+        match self {
+            Label::BYTE(count) => {
+                write!(f, "{count} Byte(s)")
+            }
+            Label::KIB(count) => {
+                write!(f, "{count} KiB(s)")
+            }
+            Label::MIB(count) => {
+                write!(f, "{count} MiB(s)")
+            }
+            Label::GIB(count) => {
+                write!(f, "{count} GiB(s)")
+            }
+        }
     }
 }
-
-// Hacky solution to avoid allocation, but keep the names
-static BYTE_LABELS: (&str, &str, &str, &str) = ("GiB", "MiB", "KiB", "Bytes");
-
 pub trait LabelBytes {
     fn label_bytes(&self) -> Label;
 }
@@ -173,25 +88,39 @@ impl LabelBytes for usize {
         let bytes = *self;
 
         if bytes >> 30 > 0 {
-            return Label {
-                size: bytes >> 30,
-                text_label: BYTE_LABELS.0,
-            };
+            return Label::GIB(bytes >> 30);
         } else if bytes >> 20 > 0 {
-            return Label {
-                size: bytes >> 20,
-                text_label: BYTE_LABELS.1,
-            };
+            return Label::MIB(bytes >> 20);
         } else if bytes >> 10 > 0 {
-            return Label {
-                size: bytes >> 10,
-                text_label: BYTE_LABELS.2,
-            };
+            return Label::KIB(bytes >> 10);
         } else {
-            return Label {
-                size: bytes,
-                text_label: BYTE_LABELS.3,
-            };
+            return Label::BYTE(bytes);
         }
+    }
+}
+
+/// # Safety
+/// This will produce undefined behavior if dst is not valid for count writes
+pub unsafe fn memset32(dst: *mut u32, val: u32, count: usize) {
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        let mut buf = dst;
+        unsafe {
+            while buf < dst.add(count) {
+                core::ptr::write_volatile(buf, val);
+                buf = buf.offset(1);
+            }
+        }
+        return;
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        core::arch::asm!(
+            "rep stosd",
+            inout("ecx") count => _,
+            inout("edi") dst => _,
+            inout("eax") val => _
+        );
     }
 }
