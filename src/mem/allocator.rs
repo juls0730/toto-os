@@ -62,11 +62,38 @@ impl LinkedListAllocator {
         );
         assert!(size >= core::mem::size_of::<MemNode>());
 
+        let mut target_node = &mut self.head;
+
+        while let Some(mut next_node) = target_node.next {
+            if next_node.as_ref().addr() > addr as usize {
+                break;
+            }
+
+            target_node = next_node.as_mut()
+        }
+
         let mut node = MemNode::new(size);
-        node.next = self.head.next.take();
+        node.next = target_node.next.take();
 
         addr.cast::<MemNode>().write(node);
-        self.head.next = Some(NonNull::new_unchecked(addr.cast::<MemNode>()));
+        target_node.next = Some(NonNull::new_unchecked(addr.cast::<MemNode>()));
+    }
+
+    unsafe fn coalesce_memory(&mut self) {
+        let mut current_node = &mut self.head;
+
+        while let Some(mut next) = current_node.next {
+            let next = next.as_mut();
+
+            if current_node.end_addr() == next.addr() {
+                let new_size = current_node.size + next.size;
+
+                current_node.size = new_size;
+                current_node.next = next.next.take();
+            } else {
+                current_node = next;
+            }
+        }
     }
 
     fn alloc_from_node(node: &MemNode, layout: Layout) -> *mut u8 {
@@ -110,6 +137,31 @@ impl LinkedListAllocator {
         return None;
     }
 
+    pub fn count_reginos(&self) -> usize {
+        let mut region_count = 0;
+        let mut cur_region = &self.head;
+
+        while let Some(next) = cur_region.next {
+            cur_region = unsafe { next.as_ref() };
+            region_count += 1;
+        }
+
+        region_count
+    }
+
+    pub fn debug_regions(&self, buf: &mut [(usize, usize)]) {
+        let mut i = 0;
+        let mut cur_region = &self.head;
+        buf[i] = (cur_region.addr(), cur_region.end_addr());
+        i += 1;
+
+        while let Some(next) = cur_region.next {
+            cur_region = unsafe { next.as_ref() };
+            buf[i] = (cur_region.addr(), cur_region.end_addr());
+            i += 1;
+        }
+    }
+
     fn size_align(layout: Layout) -> Layout {
         let layout = layout
             .align_to(core::mem::align_of::<MemNode>())
@@ -142,6 +194,7 @@ impl LinkedListAllocator {
         let layout = Self::size_align(layout);
 
         self.add_free_region(ptr, layout.size());
+        self.coalesce_memory();
     }
 }
 

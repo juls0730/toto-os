@@ -408,8 +408,14 @@ impl From<&[u8]> for Inode {
 }
 
 impl VNodeOperations for Inode {
-    fn open(
+    fn open(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {}
+
+    fn close(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {}
+
+    fn read(
         &mut self,
+        count: usize,
+        offset: usize,
         _f: u32,
         _c: super::vfs::UserCred,
         vp: NonNull<VNode>,
@@ -419,7 +425,7 @@ impl VNodeOperations for Inode {
         match self {
             Inode::BasicFile(file) => unsafe {
                 // TODO: is this really how you're supposed to do this?
-                let mut block_data: Vec<u8> = Vec::with_capacity(file.file_size as usize);
+                let mut block_data: Vec<u8> = Vec::with_capacity(count);
 
                 let data_table: Vec<u8>;
 
@@ -487,10 +493,9 @@ impl VNodeOperations for Inode {
                     );
 
                     file.block_offset as usize
-                };
+                } + offset;
 
-                block_data
-                    .extend(&data_table[block_offset..(block_offset + file.file_size as usize)]);
+                block_data.extend(&data_table[block_offset..(block_offset + count as usize)]);
 
                 return Ok(Arc::from(block_data));
             },
@@ -498,18 +503,14 @@ impl VNodeOperations for Inode {
         }
     }
 
-    fn close(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
-        todo!()
-    }
-
-    fn rdwr(
+    fn write(
         &mut self,
-        _uiop: *const super::vfs::UIO,
-        _direction: super::vfs::IODirection,
+        _offset: usize,
+        _buf: &[u8],
         _f: u32,
         _c: super::vfs::UserCred,
         _vp: NonNull<VNode>,
-    ) -> Result<Arc<[u8]>, ()> {
+    ) {
         todo!()
     }
 
@@ -518,15 +519,6 @@ impl VNodeOperations for Inode {
         _com: u32,
         _d: *mut u8,
         _f: u32,
-        _c: super::vfs::UserCred,
-        _vp: NonNull<VNode>,
-    ) {
-        todo!()
-    }
-
-    fn select(
-        &mut self,
-        _w: super::vfs::IODirection,
         _c: super::vfs::UserCred,
         _vp: NonNull<VNode>,
     ) {
@@ -552,8 +544,6 @@ impl VNodeOperations for Inode {
         vp: NonNull<VNode>,
     ) -> Result<super::vfs::VNode, ()> {
         let squashfs = unsafe { (*vp.as_ptr()).parent_vfs.as_mut().data.cast::<Squashfs>() };
-
-        crate::println!("wawawaw");
 
         match self {
             Inode::BasicDirectory(_) | Inode::ExtendedDirectory(_) => unsafe {
@@ -647,20 +637,11 @@ impl VNodeOperations for Inode {
         todo!()
     }
 
-    fn inactive(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
-        todo!()
-    }
-
-    fn bmap(&mut self, _block_number: u32, _bnp: (), _vp: NonNull<VNode>) -> super::vfs::VNode {
-        todo!()
-    }
-
-    fn strategy(&mut self, _bp: (), _vp: NonNull<VNode>) {
-        todo!()
-    }
-
-    fn bread(&mut self, _block_number: u32, _vp: NonNull<VNode>) -> Arc<[u8]> {
-        todo!()
+    fn len(&self, _vp: NonNull<VNode>) -> usize {
+        match self {
+            Inode::BasicFile(file) => file.file_size as usize,
+            _ => panic!("idk"),
+        }
     }
 }
 

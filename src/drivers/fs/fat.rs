@@ -567,44 +567,89 @@ enum File {
 }
 
 impl VNodeOperations for File {
-    fn access(&mut self, _m: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
-        todo!("VNODE OPERATIONS");
-    }
+    fn open(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {}
 
-    fn bmap(&mut self, _block_number: u32, _bnp: (), _vp: NonNull<VNode>) -> super::vfs::VNode {
-        todo!("VNODE OPERATIONS");
-    }
+    fn close(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {}
 
-    fn bread(&mut self, _block_number: u32, _vp: NonNull<VNode>) -> Arc<[u8]> {
-        todo!("VNODE OPERATIONS");
-    }
-
-    fn close(&mut self, _f: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
-        todo!("VNODE OPERATIONS");
-    }
-
-    fn create(
+    fn read(
         &mut self,
-        _nm: &str,
-        _va: super::vfs::VAttr,
-        _e: u32,
-        _m: u32,
+        count: usize,
+        mut offset: usize,
+        _f: u32,
+        _c: super::vfs::UserCred,
+        vp: NonNull<VNode>,
+    ) -> Result<Arc<[u8]>, ()> {
+        match self {
+            File::Archive(archive) => {
+                let fat_fs = unsafe { (*vp.as_ptr()).parent_vfs.as_mut().data.cast::<FatFs>() };
+
+                let mut file: Vec<u8> = Vec::with_capacity(count);
+
+                let mut cluster = ((archive.file_entry.high_first_cluster_number as u32) << 16)
+                    | archive.file_entry.low_first_cluster_number as u32;
+
+                let cluster_size = unsafe { (*fat_fs).cluster_size };
+
+                let mut cluster_offset = offset / cluster_size;
+                while cluster_offset > 0 {
+                    cluster = unsafe { (*fat_fs).get_next_cluster(cluster as usize) };
+                    cluster_offset -= 1;
+                }
+
+                let mut copied_bytes = 0;
+
+                loop {
+                    let cluster_data = unsafe { (*fat_fs).read_cluster(cluster as usize)? };
+
+                    let remaining = count as usize - copied_bytes;
+                    let to_copy = if remaining > cluster_size {
+                        cluster_size - offset
+                    } else {
+                        remaining
+                    };
+
+                    file.extend(cluster_data[offset..offset + to_copy].iter());
+
+                    offset = 0;
+
+                    copied_bytes += to_copy;
+
+                    cluster = unsafe { (*fat_fs).get_next_cluster(cluster as usize) };
+
+                    match unsafe { (*fat_fs).fat_type } {
+                        FatType::Fat12(_) => {
+                            if cluster >= EOC_12 {
+                                break;
+                            }
+                        }
+                        FatType::Fat16(_) => {
+                            if cluster >= EOC_16 {
+                                break;
+                            }
+                        }
+                        FatType::Fat32(_) => {
+                            if cluster >= EOC_32 {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                return Ok(Arc::from(file));
+            }
+            _ => panic!("Cannot open non archives"),
+        }
+    }
+
+    fn write(
+        &mut self,
+        _offset: usize,
+        _buf: &[u8],
+        _f: u32,
         _c: super::vfs::UserCred,
         _vp: NonNull<VNode>,
-    ) -> Result<super::vfs::VNode, ()> {
-        todo!("VNODE OPERATIONS");
-    }
-
-    fn fsync(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
-        todo!("VNODE OPERATIONS");
-    }
-
-    fn getattr(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) -> super::vfs::VAttr {
-        todo!("VNODE OPERATIONS");
-    }
-
-    fn inactive(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
-        todo!("VNODE OPERATIONS");
+    ) {
+        todo!()
     }
 
     fn ioctl(
@@ -618,13 +663,15 @@ impl VNodeOperations for File {
         todo!("VNODE OPERATIONS");
     }
 
-    fn link(
-        &mut self,
-        _target_dir: *mut super::vfs::VNode,
-        _target_name: &str,
-        _c: super::vfs::UserCred,
-        _vp: NonNull<VNode>,
-    ) {
+    fn getattr(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) -> super::vfs::VAttr {
+        todo!("VNODE OPERATIONS");
+    }
+
+    fn setattr(&mut self, _va: super::vfs::VAttr, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
+        todo!("VNODE OPERATIONS");
+    }
+
+    fn access(&mut self, _m: u32, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
         todo!("VNODE OPERATIONS");
     }
 
@@ -663,109 +710,22 @@ impl VNodeOperations for File {
         }
     }
 
-    fn mkdir(
+    fn create(
         &mut self,
         _nm: &str,
         _va: super::vfs::VAttr,
+        _e: u32,
+        _m: u32,
         _c: super::vfs::UserCred,
         _vp: NonNull<VNode>,
     ) -> Result<super::vfs::VNode, ()> {
         todo!("VNODE OPERATIONS");
     }
 
-    fn open(
+    fn link(
         &mut self,
-        _f: u32,
-        _c: super::vfs::UserCred,
-        vp: NonNull<VNode>,
-    ) -> Result<Arc<[u8]>, ()> {
-        match self {
-            File::Archive(archive) => {
-                let fat_fs = unsafe { (*vp.as_ptr()).parent_vfs.as_mut().data.cast::<FatFs>() };
-
-                let mut file: Vec<u8> = Vec::with_capacity(archive.file_entry.file_size as usize);
-                let mut file_ptr_index = 0;
-
-                let mut cluster = ((archive.file_entry.high_first_cluster_number as u32) << 16)
-                    | archive.file_entry.low_first_cluster_number as u32;
-                let cluster_size = unsafe { (*fat_fs).cluster_size };
-
-                let mut copied_bytes = 0;
-
-                loop {
-                    let cluster_data = unsafe { (*fat_fs).read_cluster(cluster as usize)? };
-
-                    let remaining = archive.file_entry.file_size as usize - copied_bytes;
-                    let to_copy = if remaining > cluster_size {
-                        cluster_size
-                    } else {
-                        remaining
-                    };
-
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            cluster_data.as_ptr(),
-                            file.as_mut_ptr().add(file_ptr_index),
-                            to_copy,
-                        );
-
-                        file.set_len(file.len() + to_copy);
-                    }
-
-                    file_ptr_index += cluster_size;
-
-                    copied_bytes += to_copy;
-
-                    cluster = unsafe { (*fat_fs).get_next_cluster(cluster as usize) };
-
-                    match unsafe { (*fat_fs).fat_type } {
-                        FatType::Fat12(_) => {
-                            if cluster >= EOC_12 {
-                                break;
-                            }
-                        }
-                        FatType::Fat16(_) => {
-                            if cluster >= EOC_16 {
-                                break;
-                            }
-                        }
-                        FatType::Fat32(_) => {
-                            if cluster >= EOC_32 {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                return Ok(Arc::from(file));
-            }
-            _ => panic!("Cannot open non archives"),
-        }
-    }
-
-    fn rdwr(
-        &mut self,
-        _uiop: *const super::vfs::UIO,
-        _direction: super::vfs::IODirection,
-        _f: u32,
-        _c: super::vfs::UserCred,
-        _vp: NonNull<VNode>,
-    ) -> Result<Arc<[u8]>, ()> {
-        todo!("VNODE OPERATIONS");
-    }
-
-    fn readdir(
-        &mut self,
-        _uiop: *const super::vfs::UIO,
-        _c: super::vfs::UserCred,
-        _vp: NonNull<VNode>,
-    ) {
-        todo!("VNODE OPERATIONS");
-    }
-
-    fn readlink(
-        &mut self,
-        _uiop: *const super::vfs::UIO,
+        _target_dir: *mut super::vfs::VNode,
+        _target_name: &str,
         _c: super::vfs::UserCred,
         _vp: NonNull<VNode>,
     ) {
@@ -783,20 +743,22 @@ impl VNodeOperations for File {
         todo!("VNODE OPERATIONS");
     }
 
-    fn select(
+    fn mkdir(
         &mut self,
-        _w: super::vfs::IODirection,
+        _nm: &str,
+        _va: super::vfs::VAttr,
+        _c: super::vfs::UserCred,
+        _vp: NonNull<VNode>,
+    ) -> Result<super::vfs::VNode, ()> {
+        todo!("VNODE OPERATIONS");
+    }
+
+    fn readdir(
+        &mut self,
+        _uiop: *const super::vfs::UIO,
         _c: super::vfs::UserCred,
         _vp: NonNull<VNode>,
     ) {
-        todo!("VNODE OPERATIONS");
-    }
-
-    fn setattr(&mut self, _va: super::vfs::VAttr, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
-        todo!("VNODE OPERATIONS");
-    }
-
-    fn strategy(&mut self, _bp: (), _vp: NonNull<VNode>) {
         todo!("VNODE OPERATIONS");
     }
 
@@ -808,7 +770,27 @@ impl VNodeOperations for File {
         _c: super::vfs::UserCred,
         _vp: NonNull<VNode>,
     ) {
+        todo!("symlink not supported in FAT");
+    }
+
+    fn readlink(
+        &mut self,
+        _uiop: *const super::vfs::UIO,
+        _c: super::vfs::UserCred,
+        _vp: NonNull<VNode>,
+    ) {
         todo!("VNODE OPERATIONS");
+    }
+
+    fn fsync(&mut self, _c: super::vfs::UserCred, _vp: NonNull<VNode>) {
+        todo!("VNODE OPERATIONS");
+    }
+
+    fn len(&self, _vp: NonNull<VNode>) -> usize {
+        match self {
+            File::Archive(archive) => archive.file_entry.file_size as usize,
+            _ => panic!("idk"),
+        }
     }
 }
 

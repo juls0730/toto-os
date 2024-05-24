@@ -11,70 +11,6 @@ use alloc::{
 
 use crate::{log_info, log_ok};
 
-// TODO: probably keeps excess memory but whatever
-struct TreeNode {
-    vnode: Rc<VNode>,
-    parent: Option<NonNull<Self>>,
-    children: BTreeMap<String, Self>,
-}
-
-impl TreeNode {
-    fn new(vnode: VNode) -> Self {
-        return Self {
-            vnode: Rc::new(vnode),
-            parent: None,
-            children: BTreeMap::new(),
-        };
-    }
-
-    fn as_ptr(&self) -> NonNull<Self> {
-        return NonNull::from(self);
-    }
-
-    fn get_vnode(&mut self) -> &mut VNode {
-        Rc::get_mut(&mut self.vnode).unwrap()
-    }
-
-    fn lookup(&mut self, name: &str) -> Result<&mut Self, ()> {
-        let parent = Some(self.as_ptr());
-
-        crate::println!("looking up {name} in node_tree");
-
-        if !self.children.contains_key(name) {
-            crate::println!("not found in node tree");
-
-            let vnode: VNode;
-
-            if let Some(mut vfs) = self.vnode.vfs_mounted_here {
-                crate::println!("using VFS root");
-
-                unsafe {
-                    vnode = vfs
-                        .as_mut()
-                        .root()
-                        .lookup(name, UserCred { uid: 0, gid: 0 })?
-                };
-            } else {
-                vnode = Rc::get_mut(&mut self.vnode)
-                    .unwrap()
-                    .lookup(name, UserCred { uid: 0, gid: 0 })?;
-            }
-
-            let child_node = TreeNode {
-                vnode: Rc::new(vnode),
-                parent,
-                children: BTreeMap::new(),
-            };
-
-            self.children.insert(name.to_string(), child_node);
-            let child = self.children.get_mut(name).unwrap();
-            return Ok(child);
-        }
-
-        return Ok(self.children.get_mut(name).unwrap());
-    }
-}
-
 static mut NODE_TREE: Option<TreeNode> = None;
 static mut ROOT_VFS: Vfs = Vfs::null();
 
@@ -236,8 +172,145 @@ pub enum VNodeType {
     Bad,
 }
 
+pub struct File {
+    descriptor: NonNull<TreeNode>,
+    user_cred: UserCred,
+}
+
+impl File {
+    fn new(tree_node: NonNull<TreeNode>, user_cred: UserCred) -> Self {
+        return Self {
+            descriptor: tree_node,
+            user_cred,
+        };
+    }
+
+    fn get_node(&mut self) -> &mut TreeNode {
+        unsafe { self.descriptor.as_mut() }
+    }
+
+    pub fn read(&mut self, count: usize, offset: usize, f: u32) -> Result<Arc<[u8]>, ()> {
+        return self.get_node().read(count, offset, f);
+    }
+
+    pub fn write(&mut self, offset: usize, buf: &[u8], f: u32) {
+        self.get_node().write(offset, buf, f);
+    }
+
+    pub fn len(&mut self) -> usize {
+        self.get_node().len()
+    }
+}
+
+impl Drop for File {
+    fn drop(&mut self) {
+        let cred = self.user_cred;
+
+        self.get_node().close(0, cred);
+    }
+}
+
+// TODO: probably keeps excess memory but whatever
+pub struct TreeNode {
+    vnode: VNode,
+    parent: Option<NonNull<Self>>,
+    children: BTreeMap<String, Self>,
+}
+
+impl TreeNode {
+    fn new(vnode: VNode) -> Self {
+        return Self {
+            vnode: vnode,
+            parent: None,
+            children: BTreeMap::new(),
+        };
+    }
+
+    fn as_ptr(&self) -> NonNull<Self> {
+        return NonNull::from(self);
+    }
+
+    fn get_vnode_mut(&mut self) -> &mut VNode {
+        &mut self.vnode
+    }
+
+    fn get_vnode(&self) -> &VNode {
+        &self.vnode
+    }
+
+    pub fn lookup(&mut self, name: &str) -> Result<&mut Self, ()> {
+        let parent = Some(self.as_ptr());
+
+        if !self.children.contains_key(name) {
+            let vnode: VNode;
+
+            if let Some(mut vfs) = self.vnode.vfs_mounted_here {
+                unsafe {
+                    vnode = vfs
+                        .as_mut()
+                        .root()
+                        .lookup(name, UserCred { uid: 0, gid: 0 })?
+                };
+            } else {
+                vnode = self
+                    .get_vnode_mut()
+                    .lookup(name, UserCred { uid: 0, gid: 0 })?;
+            }
+
+            let child_node = TreeNode {
+                vnode: vnode,
+                parent,
+                children: BTreeMap::new(),
+            };
+
+            self.children.insert(name.to_string(), child_node);
+            let child = self.children.get_mut(name).unwrap();
+            return Ok(child);
+        }
+
+        return Ok(self.children.get_mut(name).unwrap());
+    }
+
+    fn read(&mut self, count: usize, offset: usize, f: u32) -> Result<Arc<[u8]>, ()> {
+        self.get_vnode_mut()
+            .read(count, offset, f, UserCred { uid: 0, gid: 0 })
+    }
+
+    fn write(&mut self, offset: usize, buf: &[u8], f: u32) {
+        self.get_vnode_mut()
+            .write(offset, buf, f, UserCred { uid: 0, gid: 0 })
+    }
+
+    pub fn open(&mut self, f: u32, c: UserCred) -> File {
+        let vnode = self.get_vnode_mut();
+
+        if vnode.ref_count == 0 {
+            vnode.open(f, c);
+        }
+
+        vnode.ref_count += 1;
+
+        return File::new(self.as_ptr(), c);
+    }
+
+    fn close(&mut self, f: u32, c: UserCred) {
+        let vnode = self.get_vnode_mut();
+
+        vnode.ref_count -= 1;
+
+        if vnode.ref_count == 0 {
+            vnode.close(f, c)
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.get_vnode().len()
+    }
+}
+
 pub struct VNode {
     pub flags: u16,
+    ref_count: u32,
     inode: Box<dyn VNodeOperations>,
     pub node_data: Option<NodeData>,
     pub vfs_mounted_here: Option<NonNull<Vfs>>,
@@ -254,6 +327,7 @@ impl VNode {
     ) -> Self {
         return Self {
             flags: 0,
+            ref_count: 0,
             inode,
             node_data: None,
             vfs_mounted_here: None,
@@ -268,7 +342,7 @@ impl VNode {
     }
 
     // Trait functions
-    pub fn open(&mut self, f: u32, c: UserCred) -> Result<Arc<[u8]>, ()> {
+    pub fn open(&mut self, f: u32, c: UserCred) {
         let vp = self.as_ptr();
 
         self.inode.as_mut().open(f, c, vp)
@@ -280,29 +354,38 @@ impl VNode {
         self.inode.as_mut().close(f, c, vp)
     }
 
-    pub fn rdwr(
+    pub fn read(
         &mut self,
-        uiop: *const UIO,
-        direction: IODirection,
+        count: usize,
+        offset: usize,
         f: u32,
         c: UserCred,
     ) -> Result<Arc<[u8]>, ()> {
+        if offset >= self.len() || count > self.len() || count + offset > self.len() {
+            return Err(());
+        }
+
         let vp = self.as_ptr();
 
-        self.inode.as_mut().rdwr(uiop, direction, f, c, vp)
+        self.inode.as_mut().read(count, offset, f, c, vp)
     }
 
+    pub fn write(&mut self, offset: usize, buf: &[u8], f: u32, c: UserCred) {
+        let vp = self.as_ptr();
+
+        self.inode.as_mut().write(offset, buf, f, c, vp)
+    }
     pub fn ioctl(&mut self, com: u32, d: *mut u8, f: u32, c: UserCred) {
         let vp = self.as_ptr();
 
         self.inode.as_mut().ioctl(com, d, f, c, vp)
     }
 
-    pub fn select(&mut self, w: IODirection, c: UserCred) {
-        let vp = self.as_ptr();
+    // pub fn select(&mut self, w: IODirection, c: UserCred) {
+    //     let vp = self.as_ptr();
 
-        self.inode.as_mut().select(w, c, vp)
-    }
+    //     self.inode.as_mut().select(w, c, vp)
+    // }
 
     pub fn getattr(&mut self, c: UserCred) -> VAttr {
         let vp = self.as_ptr();
@@ -387,28 +470,34 @@ impl VNode {
         self.inode.as_mut().fsync(c, vp)
     }
 
-    pub fn inactive(&mut self, c: UserCred) {
+    // pub fn inactive(&mut self, c: UserCred) {
+    //     let vp = self.as_ptr();
+
+    //     self.inode.as_mut().inactive(c, vp)
+    // }
+
+    // pub fn bmap(&mut self, block_number: u32, bnp: ()) -> VNode {
+    //     let vp = self.as_ptr();
+
+    //     self.inode.as_mut().bmap(block_number, bnp, vp)
+    // }
+
+    // pub fn strategy(&mut self, bp: ()) {
+    //     let vp = self.as_ptr();
+
+    //     self.inode.as_mut().strategy(bp, vp)
+    // }
+
+    // pub fn bread(&mut self, block_number: u32) -> Arc<[u8]> {
+    //     let vp = self.as_ptr();
+
+    //     self.inode.as_mut().bread(block_number, vp)
+    // }
+
+    pub fn len(&self) -> usize {
         let vp = self.as_ptr();
 
-        self.inode.as_mut().inactive(c, vp)
-    }
-
-    pub fn bmap(&mut self, block_number: u32, bnp: ()) -> VNode {
-        let vp = self.as_ptr();
-
-        self.inode.as_mut().bmap(block_number, bnp, vp)
-    }
-
-    pub fn strategy(&mut self, bp: ()) {
-        let vp = self.as_ptr();
-
-        self.inode.as_mut().strategy(bp, vp)
-    }
-
-    pub fn bread(&mut self, block_number: u32) -> Arc<[u8]> {
-        let vp = self.as_ptr();
-
-        self.inode.as_mut().bread(block_number, vp)
+        self.inode.as_ref().len(vp)
     }
 }
 
@@ -424,15 +513,16 @@ pub union NodeData {
     stream_data: (), // Stream
 }
 
+#[derive(Clone, Copy)]
 pub struct UserCred {
     pub uid: u16,
     pub gid: u16,
 }
 
-pub enum IODirection {
-    Read,
-    Write,
-}
+// pub enum IODirection {
+//     Read,
+//     Write,
+// }
 
 #[allow(unused)]
 pub struct IoVec {
@@ -452,18 +542,19 @@ pub struct UIO {
 }
 
 pub trait VNodeOperations {
-    fn open(&mut self, f: u32, c: UserCred, vp: NonNull<VNode>) -> Result<Arc<[u8]>, ()>;
+    fn open(&mut self, f: u32, c: UserCred, vp: NonNull<VNode>);
     fn close(&mut self, f: u32, c: UserCred, vp: NonNull<VNode>);
-    fn rdwr(
+    fn read(
         &mut self,
-        uiop: *const UIO,
-        direction: IODirection,
+        count: usize,
+        offset: usize,
         f: u32,
         c: UserCred,
         vp: NonNull<VNode>,
     ) -> Result<Arc<[u8]>, ()>;
+    fn write(&mut self, offset: usize, buf: &[u8], f: u32, c: UserCred, vp: NonNull<VNode>);
     fn ioctl(&mut self, com: u32, d: *mut u8, f: u32, c: UserCred, vp: NonNull<VNode>);
-    fn select(&mut self, w: IODirection, c: UserCred, vp: NonNull<VNode>);
+    // fn select(&mut self, w: IODirection, c: UserCred, vp: NonNull<VNode>);
     fn getattr(&mut self, c: UserCred, vp: NonNull<VNode>) -> VAttr;
     fn setattr(&mut self, va: VAttr, c: UserCred, vp: NonNull<VNode>);
     fn access(&mut self, m: u32, c: UserCred, vp: NonNull<VNode>);
@@ -498,10 +589,11 @@ pub trait VNodeOperations {
     );
     fn readlink(&mut self, uiop: *const UIO, c: UserCred, vp: NonNull<VNode>);
     fn fsync(&mut self, c: UserCred, vp: NonNull<VNode>);
-    fn inactive(&mut self, c: UserCred, vp: NonNull<VNode>);
-    fn bmap(&mut self, block_number: u32, bnp: (), vp: NonNull<VNode>) -> VNode;
-    fn strategy(&mut self, bp: (), vp: NonNull<VNode>);
-    fn bread(&mut self, block_number: u32, vp: NonNull<VNode>) -> Arc<[u8]>;
+    // fn inactive(&mut self, c: UserCred, vp: NonNull<VNode>);
+    // fn bmap(&mut self, block_number: u32, bnp: (), vp: NonNull<VNode>) -> VNode;
+    // fn strategy(&mut self, bp: (), vp: NonNull<VNode>);
+    // fn bread(&mut self, block_number: u32, vp: NonNull<VNode>) -> Arc<[u8]>;
+    fn len(&self, vp: NonNull<VNode>) -> usize;
 }
 
 #[allow(unused)]
@@ -549,9 +641,9 @@ pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
             return Err(());
         }
 
-        let vnode = vfs_open(mount_point)?;
+        let file = vfs_open(mount_point)?;
 
-        vnode.vfs_mounted_here = Some(vfsp);
+        file.get_vnode_mut().vfs_mounted_here = Some(vfsp);
     }
 
     vfs.mount(mount_point);
@@ -563,7 +655,7 @@ pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
     return Ok(());
 }
 
-pub fn vfs_open(path: &str) -> Result<&mut VNode, ()> {
+pub fn vfs_open(path: &str) -> Result<&mut TreeNode, ()> {
     if unsafe { ROOT_VFS.next.is_none() || NODE_TREE.is_none() } {
         return Err(());
     }
@@ -584,5 +676,5 @@ pub fn vfs_open(path: &str) -> Result<&mut VNode, ()> {
         }
     }
 
-    return Ok(cur_node.get_vnode());
+    return Ok(cur_node);
 }

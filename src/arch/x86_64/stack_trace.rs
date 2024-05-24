@@ -1,6 +1,6 @@
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
-use crate::drivers::fs::vfs::vfs_open;
+use crate::drivers::fs::vfs::{vfs_open, UserCred};
 
 // use crate::drivers::fs::vfs::VfsFileSystem;
 
@@ -47,10 +47,11 @@ pub fn print_stack_trace(max_frames: usize, rbp: u64) {
 
 fn get_function_name(function_address: u64) -> Result<(String, u64), ()> {
     // TODO: dont rely on initramfs being mounted at /
-    let mut symbols_fd = vfs_open("/symbols.table")?;
+    let symbols_fd = vfs_open("/symbols.table")?;
 
-    let symbols_table_bytes =
-        symbols_fd.open(0, crate::drivers::fs::vfs::UserCred { uid: 0, gid: 0 })?;
+    let symbols_table_bytes = symbols_fd
+        .open(0, UserCred { uid: 0, gid: 0 })
+        .read(0, 0, 0)?;
     let symbols_table = core::str::from_utf8(&symbols_table_bytes).ok().ok_or(())?;
 
     let mut previous_symbol: Option<(&str, u64)> = None;

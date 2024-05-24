@@ -51,37 +51,46 @@ pub fn kmain() -> ! {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     drivers::pci::enumerate_pci_bus();
 
-    let file = vfs_open("/firstdir/seconddirbutlonger/yeah.txt").unwrap();
+    let mut file = vfs_open("/firstdir/seconddirbutlonger/yeah.txt")
+        .unwrap()
+        .open(0, UserCred { uid: 0, gid: 0 });
 
-    crate::println!("YEAH.TXT: {:X?}", file.open(0, UserCred { uid: 0, gid: 0 }));
+    let file_len = file.len();
+
+    crate::println!("YEAH.TXT: {:X?}", file.read(file_len, 0, 0));
 
     drivers::storage::ide::init();
     let limine_dir = vfs_open("/mnt/boot/limine").unwrap();
 
-    crate::println!(
-        "LIMINE BOOT: {:X?}",
-        limine_dir
-            .lookup("limine.cfg", UserCred { uid: 0, gid: 0 })
+    crate::println!("LIMINE BOOT: {:X?}", {
+        let mut cfg_file = limine_dir
+            .lookup("limine.cfg")
             .unwrap()
-            .open(0, UserCred { uid: 0, gid: 0 })
-    );
+            .open(0, UserCred { uid: 0, gid: 0 });
 
-    // TODO: figure out whether this should or shouldnt work in the first place
-    // let root_dir = vfs_open("/").unwrap();
+        let len = cfg_file.len();
 
-    // crate::println!(
-    //     "LIMINE BOOT THROUGH LOOKUP: {:X?}",
-    //     root_dir
-    //         .lookup("mnt", UserCred { uid: 0, gid: 0 })
-    //         .unwrap()
-    //         .lookup("boot", UserCred { uid: 0, gid: 0 })
-    //         .unwrap()
-    //         .lookup("limine", UserCred { uid: 0, gid: 0 })
-    //         .unwrap()
-    //         .lookup("limine.cfg", UserCred { uid: 0, gid: 0 })
-    //         .unwrap()
-    //         .open(0, UserCred { uid: 0, gid: 0 })
-    // );
+        cfg_file.read(len, 0, 0)
+    });
+
+    let root_dir = vfs_open("/").unwrap();
+
+    crate::println!("LIMINE BOOT THROUGH LOOKUP: {:X?}", {
+        let mut cfg_file = root_dir
+            .lookup("mnt")
+            .unwrap()
+            .lookup("boot")
+            .unwrap()
+            .lookup("limine")
+            .unwrap()
+            .lookup("limine.cfg")
+            .unwrap()
+            .open(0, UserCred { uid: 0, gid: 0 });
+
+        let len = cfg_file.len();
+
+        cfg_file.read(len, 0, 0)
+    });
 
     // let file = vfs_open("/example.txt").unwrap();
 
