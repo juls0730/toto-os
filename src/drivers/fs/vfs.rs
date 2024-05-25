@@ -3,7 +3,6 @@ use core::{fmt::Debug, ptr::NonNull};
 use alloc::{
     boxed::Box,
     collections::BTreeMap,
-    rc::Rc,
     string::{String, ToString},
     sync::Arc,
     vec::Vec,
@@ -17,6 +16,7 @@ static mut ROOT_VFS: Vfs = Vfs::null();
 // TODO: everything being Option to accomodate the stupid null root vfs is getting annoying
 #[allow(unused)]
 pub struct Vfs {
+    mount_point: Option<String>,
     next: Option<Box<Vfs>>,
     pub fs: Option<Box<dyn FsOps>>,
     vnode_covered: Option<NonNull<VNode>>,
@@ -29,7 +29,8 @@ impl !Sync for Vfs {}
 
 impl Vfs {
     const fn null() -> Self {
-        return Vfs {
+        return Self {
+            mount_point: None,
             next: None,
             fs: None,
             vnode_covered: None,
@@ -39,11 +40,53 @@ impl Vfs {
         };
     }
 
+    fn new(fs: Box<dyn FsOps>, mount_point: &str) -> Self {
+        return Self {
+            mount_point: Some(mount_point.to_string()),
+            next: None,
+            fs: Some(fs),
+            vnode_covered: None,
+            flags: 0,
+            block_size: 0,
+            data: core::ptr::null_mut(),
+        };
+    }
+
+    // sketchy and dumb? yes, but it works
+    fn prev(&self) -> Option<&mut Box<Self>> {
+        let mut cur_vfs = unsafe { ROOT_VFS.next.as_mut() };
+        while let Some(vfs) = cur_vfs {
+            if let Some(next_vfs) = &vfs.next {
+                if next_vfs.mount_point == self.mount_point {
+                    return Some(vfs);
+                }
+            }
+
+            cur_vfs = vfs.next.as_mut();
+        }
+
+        None
+    }
+
+    fn del_vfs(&mut self, target_name: &str) {
+        let mut curr = self.next.as_mut();
+
+        while let Some(node) = curr {
+            if node.mount_point.as_deref() == Some(target_name) {
+                node.prev().unwrap().next = node.next.take();
+                return;
+            }
+
+            curr = node.next.as_mut();
+        }
+    }
+
     fn add_vfs(&mut self, vfs: Box<Self>) {
         let mut current = self;
         while let Some(ref mut next_vfs) = current.next {
             current = next_vfs;
         }
+
         current.next = Some(vfs);
     }
 
@@ -189,7 +232,11 @@ impl File {
         unsafe { self.descriptor.as_mut() }
     }
 
-    pub fn read(&mut self, count: usize, offset: usize, f: u32) -> Result<Arc<[u8]>, ()> {
+    pub fn read(&mut self, mut count: usize, offset: usize, f: u32) -> Result<Arc<[u8]>, ()> {
+        if count == 0 {
+            count = self.len() - offset;
+        }
+
         return self.get_node().read(count, offset, f);
     }
 
@@ -618,9 +665,7 @@ pub struct VAttr {
 
 pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
     // Initialize the data so we can use the nonnull helpers
-    let mut new_vfs = Vfs::null();
-    new_vfs.fs = Some(fs_ops);
-    let mut vfs = Box::new(new_vfs);
+    let mut vfs = Box::new(Vfs::new(fs_ops, mount_point));
 
     let vfsp = vfs.as_ptr();
 
@@ -651,6 +696,75 @@ pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
     unsafe { ROOT_VFS.add_vfs(vfs) };
 
     log_ok!("Added vfs at {mount_point}");
+
+    return Ok(());
+}
+
+// returns if the path in other_mount_point starts with mount_point but more sophisticated-ly
+fn mount_point_busy(mount_point: &str) -> bool {
+    let mount_parts = mount_point
+        .split_terminator('/')
+        .filter(|x| !x.is_empty())
+        .collect::<Vec<&str>>();
+    let mut next_vfs = unsafe { ROOT_VFS.next.as_ref() };
+
+    while let Some(vfs) = next_vfs {
+        if vfs.mount_point.as_ref().unwrap() == mount_point {
+            // dont consider ourself as a user of ourself
+            next_vfs = vfs.next.as_ref();
+            continue;
+        }
+
+        let parts = vfs
+            .mount_point
+            .as_ref()
+            .unwrap()
+            .split_terminator('/')
+            .filter(|x| !x.is_empty())
+            .collect::<Vec<&str>>();
+
+        for (i, &part) in parts.iter().enumerate() {
+            if i > mount_parts.len() - 1 {
+                return true;
+            }
+
+            if part == mount_parts[i] {
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        next_vfs = vfs.next.as_ref();
+    }
+
+    return false;
+}
+
+pub fn del_vfs(mount_point: &str) -> Result<(), ()> {
+    if unsafe { ROOT_VFS.next.is_none() } {
+        return Err(());
+    }
+
+    log_info!("Deleting vfs at {mount_point}");
+
+    if mount_point == "/" {
+        if unsafe { ROOT_VFS.next.as_ref().unwrap().next.is_some() } {
+            // mount point is 'busy'
+            return Err(());
+        }
+
+        unsafe { ROOT_VFS.next = None };
+    } else {
+        if mount_point_busy(mount_point) {
+            crate::println!("busy");
+            return Err(());
+        }
+
+        crate::println!("Deleting VFS");
+
+        unsafe { ROOT_VFS.del_vfs(mount_point) };
+    }
 
     return Ok(());
 }

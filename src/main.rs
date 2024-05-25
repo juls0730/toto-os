@@ -51,32 +51,31 @@ pub fn kmain() -> ! {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     drivers::pci::enumerate_pci_bus();
 
-    let mut file = vfs_open("/firstdir/seconddirbutlonger/yeah.txt")
-        .unwrap()
-        .open(0, UserCred { uid: 0, gid: 0 });
-
-    let file_len = file.len();
-
-    crate::println!("YEAH.TXT: {:X?}", file.read(file_len, 0, 0));
+    crate::println!(
+        "YEAH.TXT: {:X?}",
+        vfs_open("/firstdir/seconddirbutlonger/yeah.txt")
+            .unwrap()
+            .open(0, UserCred { uid: 0, gid: 0 })
+            .read(0, 0, 0)
+    );
 
     drivers::storage::ide::init();
     let limine_dir = vfs_open("/mnt/boot/limine").unwrap();
 
-    crate::println!("LIMINE BOOT: {:X?}", {
-        let mut cfg_file = limine_dir
+    crate::println!(
+        "LIMINE BOOT: {:X?}",
+        limine_dir
             .lookup("limine.cfg")
             .unwrap()
-            .open(0, UserCred { uid: 0, gid: 0 });
-
-        let len = cfg_file.len();
-
-        cfg_file.read(len, 0, 0)
-    });
+            .open(0, UserCred { uid: 0, gid: 0 })
+            .read(0, 0, 0)
+    );
 
     let root_dir = vfs_open("/").unwrap();
 
-    crate::println!("LIMINE BOOT THROUGH LOOKUP: {:X?}", {
-        let mut cfg_file = root_dir
+    crate::println!(
+        "LIMINE BOOT THROUGH LOOKUP: {:X?}",
+        root_dir
             .lookup("mnt")
             .unwrap()
             .lookup("boot")
@@ -85,12 +84,24 @@ pub fn kmain() -> ! {
             .unwrap()
             .lookup("limine.cfg")
             .unwrap()
-            .open(0, UserCred { uid: 0, gid: 0 });
+            .open(0, UserCred { uid: 0, gid: 0 })
+            .read(0, 10, 0)
+    );
 
-        let len = cfg_file.len();
+    let _ = drivers::fs::vfs::del_vfs("/mnt");
 
-        cfg_file.read(len, 0, 0)
-    });
+    println!("wa");
+
+    let limine_dir = vfs_open("/mnt/boot/limine").unwrap();
+
+    crate::println!(
+        "LIMINE BOOT: {:X?}",
+        limine_dir
+            .lookup("limine.cfg")
+            .unwrap()
+            .open(0, UserCred { uid: 0, gid: 0 })
+            .read(0, 0, 0)
+    );
 
     // let file = vfs_open("/example.txt").unwrap();
 
