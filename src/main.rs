@@ -90,8 +90,6 @@ pub fn kmain() -> ! {
 
     let _ = drivers::fs::vfs::del_vfs("/mnt");
 
-    println!("wa");
-
     let limine_dir = vfs_open("/mnt/boot/limine").unwrap();
 
     crate::println!(

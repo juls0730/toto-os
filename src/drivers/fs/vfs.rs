@@ -17,7 +17,8 @@ static mut ROOT_VFS: Vfs = Vfs::null();
 #[allow(unused)]
 pub struct Vfs {
     mount_point: Option<String>,
-    next: Option<Box<Vfs>>,
+    next: Option<Box<Self>>,
+    prev: Option<NonNull<Self>>,
     pub fs: Option<Box<dyn FsOps>>,
     vnode_covered: Option<NonNull<VNode>>,
     flags: u32,
@@ -32,6 +33,7 @@ impl Vfs {
         return Self {
             mount_point: None,
             next: None,
+            prev: None,
             fs: None,
             vnode_covered: None,
             flags: 0,
@@ -44,6 +46,7 @@ impl Vfs {
         return Self {
             mount_point: Some(mount_point.to_string()),
             next: None,
+            prev: None,
             fs: Some(fs),
             vnode_covered: None,
             flags: 0,
@@ -52,28 +55,15 @@ impl Vfs {
         };
     }
 
-    // sketchy and dumb? yes, but it works
-    fn prev(&self) -> Option<&mut Box<Self>> {
-        let mut cur_vfs = unsafe { ROOT_VFS.next.as_mut() };
-        while let Some(vfs) = cur_vfs {
-            if let Some(next_vfs) = &vfs.next {
-                if next_vfs.mount_point == self.mount_point {
-                    return Some(vfs);
-                }
-            }
-
-            cur_vfs = vfs.next.as_mut();
-        }
-
-        None
-    }
-
     fn del_vfs(&mut self, target_name: &str) {
         let mut curr = self.next.as_mut();
 
         while let Some(node) = curr {
             if node.mount_point.as_deref() == Some(target_name) {
-                node.prev().unwrap().next = node.next.take();
+                if let Some(ref mut next_node) = node.next {
+                    next_node.prev = node.prev
+                }
+                unsafe { node.prev.unwrap().as_mut().next = node.next.take() };
                 return;
             }
 
@@ -81,12 +71,13 @@ impl Vfs {
         }
     }
 
-    fn add_vfs(&mut self, vfs: Box<Self>) {
+    fn add_vfs(&mut self, mut vfs: Box<Self>) {
         let mut current = self;
         while let Some(ref mut next_vfs) = current.next {
             current = next_vfs;
         }
 
+        vfs.prev = Some(current.as_ptr());
         current.next = Some(vfs);
     }
 
@@ -757,11 +748,8 @@ pub fn del_vfs(mount_point: &str) -> Result<(), ()> {
         unsafe { ROOT_VFS.next = None };
     } else {
         if mount_point_busy(mount_point) {
-            crate::println!("busy");
             return Err(());
         }
-
-        crate::println!("Deleting VFS");
 
         unsafe { ROOT_VFS.del_vfs(mount_point) };
     }
