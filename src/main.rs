@@ -102,6 +102,10 @@ pub fn kmain() -> ! {
             .read(0, 0, 0)
     );
 
+    unsafe {
+        *(0xDEADBEEF as *mut u32) = 0xBAADF00D;
+    };
+
     // let file = vfs_open("/example.txt").unwrap();
 
     // as a sign that we didnt panic

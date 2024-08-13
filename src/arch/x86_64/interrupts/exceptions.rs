@@ -1,3 +1,5 @@
+use core::sync::atomic::{AtomicU8, Ordering};
+
 use super::idt_set_gate;
 use crate::hcf;
 use crate::{log_error, log_info};
@@ -33,46 +35,97 @@ struct Registers {
     ss: usize,
 }
 
+static FAULTED: AtomicU8 = AtomicU8::new(0);
+
 extern "C" fn exception_handler(registers: u64) {
     let registers = unsafe { *(registers as *const Registers) };
 
-    // crate::println!("{:X?}", registers);
+    match FAULTED.fetch_add(1, Ordering::SeqCst) {
+        0 => {}
+        1 => {
+            log_error!("Exception Loop detected, stopping here");
+            print_registers(&registers);
+            hcf();
+        }
+        // We have faulted multiple times, this could indicate an issue with the allocator, stop everything without further logging since it will likely cause more issues
+        _ => hcf(),
+    }
 
     let int = registers.int;
 
     match int {
         0x00 => {
-            crate::drivers::serial::write_string("DIVISION ERROR!");
+            log_error!("DIVISION ERROR!");
         }
         0x06 => {
-            crate::drivers::serial::write_string("INVALID OPCODE!");
+            log_error!("INVALID OPCODE!");
         }
         0x08 => {
-            crate::drivers::serial::write_string("DOUBLE FAULT!");
+            log_error!("DOUBLE FAULT!");
         }
         0x0D => {
-            crate::drivers::serial::write_string("GENERAL PROTECTION FAULT!");
+            log_error!("GENERAL PROTECTION FAULT!");
         }
         0x0E => {
-            crate::drivers::serial::write_string("PAGE FAULT!");
+            log_error!("PAGE FAULT!");
         }
         0xFF => {
-            crate::drivers::serial::write_string("EXCEPTION!");
+            log_error!("EXCEPTION!");
         }
         _ => {
-            crate::drivers::serial::write_string("EXCEPTION!");
+            log_error!("EXCEPTION!");
         }
     }
 
-    // log_info!(
-    //     "INT: {:x} RIP: {:X}, CS: {:X}, EFLAGS: {:b}",
-    //     int,
-    //     registers.rip,
-    //     registers.cs,
-    //     registers.rflags
-    // );
+    print_registers(&registers);
 
-    // crate::arch::stack_trace::print_stack_trace(6, registers.rbp as u64);
+    crate::arch::stack_trace::print_stack_trace(6, registers.rbp as u64);
+}
+
+fn print_registers(registers: &Registers) {
+    log_info!("{:-^width$}", " REGISTERS ", width = 98);
+
+    log_info!(
+        "INT: {:#018X}, RIP: {:#018X},  CS: {:#018X}, FLG: {:#018X}",
+        registers.int,
+        registers.rip,
+        registers.cs,
+        registers.rflags
+    );
+
+    log_info!(
+        "RSP: {:#018X},  SS: {:#018X}, RAX: {:#018X}, RBX: {:#018X}",
+        registers.rsp,
+        registers.ss,
+        registers.rax,
+        registers.rbx
+    );
+
+    log_info!(
+        "RCX: {:#018X}, RDX: {:#018X}, RSI: {:#018X}, RDI: {:#018X}",
+        registers.rcx,
+        registers.rdx,
+        registers.rsi,
+        registers.rdi
+    );
+
+    log_info!(
+        "RBP: {:#018X},  R8: {:#018X},  R9: {:#018X}, R10: {:#018X}",
+        registers.rbp,
+        registers.r8,
+        registers.r9,
+        registers.r10
+    );
+
+    log_info!(
+        "R11: {:#018X}, R12: {:#018X}, R13: {:#018X}, R14: {:#018X}",
+        registers.r11,
+        registers.r12,
+        registers.r13,
+        registers.r14
+    );
+
+    log_info!("R15: {:#018X}", registers.r15);
 }
 
 // *macro intensifies*
@@ -80,19 +133,24 @@ macro_rules! exception_function {
     ($code:expr, $handler:ident) => {
         #[inline(always)]
         extern "C" fn $handler() {
+            crate::arch::push_gprs();
+
             unsafe {
                 core::arch::asm!(
-                    "pushfq",
                     "push {0:r}",
                     "mov rdi, rsp",
                     "call {1}",
                     "pop {0:r}",
                     "mov rsp, rdi",
-                    "popfq",
                     in(reg) $code,
                     sym exception_handler,
+                    options(nostack)
                 );
             };
+
+            crate::arch::pop_gprs();
+
+            super::signal_end_of_interrupt();
 
             hcf();
         }

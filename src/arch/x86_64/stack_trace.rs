@@ -1,6 +1,10 @@
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
-use crate::drivers::fs::vfs::{vfs_open, UserCred};
+use crate::{
+    drivers::fs::vfs::{vfs_open, UserCred},
+    log_info,
+    mem::HHDM_OFFSET,
+};
 
 // use crate::drivers::fs::vfs::VfsFileSystem;
 
@@ -8,40 +12,47 @@ use crate::drivers::fs::vfs::{vfs_open, UserCred};
 #[derive(Clone, Copy, Debug)]
 struct StackFrame {
     back: *const StackFrame,
-    rip: u64,
+    rip: usize,
 }
 
 pub fn print_stack_trace(max_frames: usize, rbp: u64) {
     let mut stackframe = rbp as *const StackFrame;
+    let mut frames_processed = 0;
 
-    crate::println!("Stack Trace:");
-    for _frame in 0..max_frames {
-        if stackframe.is_null() || unsafe { core::ptr::read_unaligned(stackframe).back.is_null() } {
+    log_info!("{:-^width$}", " Stack Trace ", width = 98);
+    for _ in 0..max_frames {
+        frames_processed += 1;
+
+        if stackframe.is_null() {
             break;
         }
 
-        let instruction_pointer = unsafe { (*stackframe).rip };
+        let instruction_ptr = unsafe { (*stackframe).rip };
 
-        if instruction_pointer == 0x0 {
+        if instruction_ptr < *HHDM_OFFSET {
             unsafe {
                 stackframe = (*stackframe).back;
             };
             continue;
         }
 
-        crate::print!("  {:#X} ", instruction_pointer);
+        let instruction_info = get_function_name(instruction_ptr as u64);
 
-        let instrcution_info = get_function_name(instruction_pointer);
-
-        if let Ok((function_name, function_offset)) = instrcution_info {
-            crate::println!("<{}+{:#X}>", function_name, function_offset);
+        let address_info = if let Ok((function_name, function_offset)) = instruction_info {
+            &alloc::format!("<{}+{:#X}>", function_name, function_offset)
         } else {
-            crate::println!();
-        }
+            ""
+        };
+
+        log_info!("{:#X} {address_info}", instruction_ptr);
 
         unsafe {
             stackframe = (*stackframe).back;
         };
+    }
+
+    if frames_processed == max_frames && !stackframe.is_null() {
+        log_info!("... <frames omitted>");
     }
 }
 
@@ -97,5 +108,5 @@ fn get_function_name(function_address: u64) -> Result<(String, u64), ()> {
         previous_symbol = Some((function_name, address));
     }
 
-    unreachable!();
+    return Err(());
 }
