@@ -4,30 +4,32 @@ mod superblock;
 use core::{fmt::Debug, mem::MaybeUninit, ptr::NonNull};
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
-use limine::ModuleRequest;
+use limine::request::ModuleRequest;
 
 use super::vfs::{FsOps, VNode, VNodeOperations, VNodeType};
 
-pub static MODULE_REQUEST: ModuleRequest = ModuleRequest::new(0);
+#[used]
+#[link_section = ".requests"]
+pub static MODULE_REQUEST: ModuleRequest = ModuleRequest::new();
 
 pub fn init() -> Squashfs<'static> {
     // TODO: Put the module request stuff in another file?
-    if MODULE_REQUEST.get_response().get().is_none() {
+    if MODULE_REQUEST.get_response().is_none() {
         panic!("Module request in none!");
     }
-    let module_response = MODULE_REQUEST.get_response().get().unwrap();
+    let module_response = MODULE_REQUEST.get_response().unwrap();
 
     let mut initramfs = None;
 
     let module_name = "initramfs.img";
 
     for module in module_response.modules() {
-        let c_path = module.path.to_str();
-        if c_path.is_none() {
+        let path = core::str::from_utf8(module.path());
+        if path.is_err() {
             continue;
         }
 
-        if !c_path.unwrap().to_str().unwrap().contains(module_name) {
+        if !path.unwrap().contains(module_name) {
             continue;
         }
 
@@ -40,7 +42,7 @@ pub fn init() -> Squashfs<'static> {
     }
     let initramfs = initramfs.unwrap();
 
-    let squashfs = Squashfs::new(initramfs.base.as_ptr().unwrap());
+    let squashfs = Squashfs::new(initramfs.addr());
 
     if squashfs.is_err() {
         panic!("Initramfs in corrupt!");
@@ -173,6 +175,7 @@ impl Squashfs<'_> {
         });
     }
 
+    #[inline(always)]
     fn get_inode_block_offset(&self, inode: u64) -> (u64, u16) {
         let inode_block = (inode >> 16) & 0x0000FFFFFFFFFFFF;
         let inode_offset = (inode & 0xFFFF) as u16;

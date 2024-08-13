@@ -20,7 +20,7 @@ IMAGE_PATH = ${ARTIFACTS_PATH}/${IMAGE_NAME}
 CARGO_OPTS = --target=src/arch/${ARCH}/${ARCH}-unknown-none.json
 QEMU_OPTS += -m ${MEMORY} -drive id=hd0,format=raw,file=${IMAGE_PATH}
 LIMINE_BOOT_VARIATION = X64
-LIMINE_BRANCH = v7.x-binary
+LIMINE_BRANCH = v8.x-binary
 
 ifeq (${MODE},release)
 	CARGO_OPTS += --release
@@ -108,7 +108,7 @@ copy-iso-files:
 
 		mkdir -p ${ISO_PATH}/mnt
 
-		cp -v limine.cfg limine/limine-bios.sys ${ISO_PATH}/boot/limine
+		cp -v limine.conf limine/limine-bios.sys ${ISO_PATH}/boot/limine
 		cp -v limine/BOOT${LIMINE_BOOT_VARIATION}.EFI ${ISO_PATH}/EFI/BOOT/
 
 		# OS files

@@ -1,4 +1,4 @@
-use limine::FramebufferRequest;
+use limine::{framebuffer, request::FramebufferRequest};
 
 use crate::libs::cell::OnceCell;
 
@@ -69,27 +69,28 @@ impl Framebuffer {
     }
 }
 
-pub static FRAMEBUFFER_REQUEST: FramebufferRequest = FramebufferRequest::new(0);
+#[used]
+#[link_section = ".requests"]
+pub static FRAMEBUFFER_REQUEST: FramebufferRequest = FramebufferRequest::new();
 pub static FRAMEBUFFER: OnceCell<Option<Framebuffer>> = OnceCell::new();
 
 pub fn get_framebuffer() -> Option<Framebuffer> {
     *FRAMEBUFFER.get_or_set(|| {
-        let framebuffer_response = crate::drivers::video::FRAMEBUFFER_REQUEST
-            .get_response()
-            .get()?;
+        let framebuffer_response = crate::drivers::video::FRAMEBUFFER_REQUEST.get_response()?;
+        let framebuffer = framebuffer_response.framebuffers().next();
 
-        if framebuffer_response.framebuffer_count < 1 {
+        if framebuffer.is_none() {
             return None;
         }
 
-        let framebuffer_response = &framebuffer_response.framebuffers()[0];
+        let framebuffer_response = framebuffer.as_ref().unwrap();
 
         let framebuffer = Framebuffer::new(
-            framebuffer_response.bpp as usize,
-            framebuffer_response.pitch as usize,
-            framebuffer_response.address.as_ptr().unwrap(),
-            framebuffer_response.width as usize,
-            framebuffer_response.height as usize,
+            framebuffer_response.bpp() as usize,
+            framebuffer_response.pitch() as usize,
+            framebuffer_response.addr(),
+            framebuffer_response.width() as usize,
+            framebuffer_response.height() as usize,
         );
 
         return Some(framebuffer);

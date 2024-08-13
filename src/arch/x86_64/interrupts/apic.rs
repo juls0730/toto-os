@@ -66,8 +66,8 @@ pub struct APIC {
     pub cpus: Arc<[LAPIC]>,
 }
 
-extern "C" fn test(info: *const limine::SmpInfo) -> ! {
-    crate::log_ok!("hey from CPU {:<02}", unsafe { (*info).processor_id });
+unsafe extern "C" fn test<'a>(cpu: &'a limine::smp::Cpu) -> ! {
+    crate::log_ok!("hey from CPU {:<02}", cpu.id);
 
     hcf();
 }
@@ -175,21 +175,21 @@ impl APIC {
 
         crate::println!("{number_of_inputs}");
 
-        let smp_request = SMP_REQUEST.get_response().get_mut();
+        let smp_request = unsafe { SMP_REQUEST.get_response_mut() };
 
         if smp_request.is_none() {
             panic!("Failed to get smp from limine!");
         }
 
         let smp_request = smp_request.unwrap();
-        let bsp_lapic_id = smp_request.bsp_lapic_id;
+        let bsp_lapic_id = smp_request.bsp_lapic_id();
 
         for cpu in smp_request.cpus() {
-            if cpu.processor_id == bsp_lapic_id {
+            if cpu.id == bsp_lapic_id {
                 continue;
             }
 
-            cpu.goto_address = test;
+            cpu.goto_address.write(test);
         }
 
         // Set and enable keyboard interrupt
@@ -220,7 +220,7 @@ impl APIC {
 
     pub fn write_lapic(&self, reg: u32, value: u32) {
         unsafe {
-            *self.local_apic.add(reg as usize).cast::<u32>() = value;
+            core::ptr::write_volatile(self.local_apic.add(reg as usize).cast::<u32>(), value);
         }
     }
 

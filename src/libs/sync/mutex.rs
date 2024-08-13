@@ -27,6 +27,7 @@ impl<T> Mutex<T> {
             .is_err()
         {
             // spin lock
+            core::hint::spin_loop()
         }
         return MutexGuard { mutex: self };
     }

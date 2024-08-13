@@ -39,20 +39,20 @@ enum FatType {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct BIOSParameterBlock {
-    _jmp_instruction: [u8; 3],     // EB 58 90
-    pub oem_identifier: [u8; 8],   // MTOO4043 (hey, mtools)
-    pub bytes_per_sector: u16,     // 00 02 (little endian so 512)
-    pub sectors_per_cluster: u8,   // 01
-    pub reserved_sectors: u16,     // 20 00 (32)
-    pub fat_count: u8,             // 02
-    pub root_directory_count: u16, // 00 00 (what)
-    pub total_sectors: u16,        // equal to zero when sector count is more than 65535
-    pub media_descriptor_type: u8, // F0
-    pub sectors_per_fat: u16,      // Fat12/Fat16 only
-    pub sectors_per_track: u16,    // 3F 00 (63)
-    pub head_count: u16,           // 10 00 (16)
-    pub hidden_sectors: u32,       // 00 00 00 00
-    pub large_sector_count: u32,   // 00 F8 01 00 (129024)
+    _jmp_instruction: [u8; 3],
+    pub oem_identifier: [u8; 8],
+    pub bytes_per_sector: u16,
+    pub sectors_per_cluster: u8,
+    pub reserved_sectors: u16,
+    pub fat_count: u8,
+    pub root_directory_count: u16,
+    pub total_sectors: u16,
+    pub media_descriptor_type: u8,
+    pub sectors_per_fat: u16,
+    pub sectors_per_track: u16,
+    pub head_count: u16,
+    pub hidden_sectors: u32,
+    pub large_sector_count: u32,
     pub ebpb_bytes: [u8; 54],
 }
 
@@ -71,19 +71,19 @@ pub struct Fat16EBPB {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct Fat32EBPB {
-    pub sectors_per_fat_ext: u32,          // E1 03 00 00 (993, wtf)
-    pub flags: [u8; 2],                    // 00 00
-    pub fat_version: u16,                  // 00 00
-    pub root_dir_cluster: u32,             // 2C 00 00 00 (2)
-    pub fsinfo_sector: u16,                // 01 00 (1)
-    pub backup_bootsector: u16,            // 06 00 (6)
-    _reserved: [u8; 12],                   // all zero
-    pub drive_number: u8,                  // 00
-    _reserved2: u8,                        // 00
-    pub signature: u8,                     // either 0x28 of 0x29: 29
-    pub volume_id: u32,                    // Varies
-    pub volume_label: [u8; 11],            // "NO NAME    "
-    pub system_identifier_string: [u8; 8], // Always "FAT32   " but never trust the contents of this string (for some reason)
+    pub sectors_per_fat_ext: u32,
+    pub flags: [u8; 2],
+    pub fat_version: u16,
+    pub root_dir_cluster: u32,
+    pub fsinfo_sector: u16,
+    pub backup_bootsector: u16,
+    _reserved: [u8; 12],
+    pub drive_number: u8,
+    _reserved2: u8,
+    pub signature: u8,
+    pub volume_id: u32,
+    pub volume_label: [u8; 11],
+    pub system_identifier_string: [u8; 8],
 }
 
 #[repr(C, packed)]
@@ -358,30 +358,28 @@ impl FatFs {
                 }
             }
 
-            if name.replacen('.', "", 1).len() <= 11 {
-                let search_parts: Vec<&str> = name.split('.').collect();
+            let raw_short_filename = core::str::from_utf8(&file_entry.file_name)
+                .unwrap()
+                .trim_end();
+            let raw_short_extension = core::str::from_utf8(&file_entry.extension)
+                .unwrap()
+                .trim_end();
+            let formatted_short_filename = match raw_short_extension.is_empty() {
+                true => raw_short_filename.to_string(),
+                false => alloc::format!("{}.{}", raw_short_filename, raw_short_extension),
+            };
 
-                let filename = core::str::from_utf8(&file_entry.file_name).unwrap();
-                let extension = core::str::from_utf8(&file_entry.extension).unwrap();
-
-                if (search_parts.len() == 1
-                    && !filename.contains(&search_parts[0].to_ascii_uppercase()))
-                    || (search_parts.len() > 1
-                        && (!filename.contains(&search_parts[0].to_ascii_uppercase())
-                            || !extension.contains(&search_parts[1].to_ascii_uppercase())))
-                {
+            if let Some(ref filename) = long_filename_string {
+                if filename != name {
                     continue;
                 }
-
-                return Ok(file_entry);
             } else {
-                // Long file name
-                if long_filename_string != Some(name.to_string()) {
+                if name.to_uppercase() != formatted_short_filename {
                     continue;
                 }
-
-                return Ok(file_entry);
             }
+
+            return Ok(file_entry);
         }
 
         return Err(());
@@ -533,9 +531,7 @@ impl FsOps for FatFs {
             ),
         };
 
-        let file = File::Dir(FatDirectory {
-            directory_cluster: root_cluster,
-        });
+        let file = File::Dir(root_cluster);
 
         return VNode::new(Box::new(file), super::vfs::VNodeType::Directory, vfsp);
     }
@@ -562,8 +558,9 @@ impl FsOps for FatFs {
 }
 
 enum File {
-    Archive(FatFile),
-    Dir(FatDirectory),
+    Archive(FileEntry),
+    // directory cluster
+    Dir(usize),
 }
 
 impl VNodeOperations for File {
@@ -585,8 +582,8 @@ impl VNodeOperations for File {
 
                 let mut file: Vec<u8> = Vec::with_capacity(count);
 
-                let mut cluster = ((archive.file_entry.high_first_cluster_number as u32) << 16)
-                    | archive.file_entry.low_first_cluster_number as u32;
+                let mut cluster = ((archive.high_first_cluster_number as u32) << 16)
+                    | archive.low_first_cluster_number as u32;
 
                 let cluster_size = unsafe { (*fat_fs).cluster_size };
 
@@ -685,8 +682,7 @@ impl VNodeOperations for File {
 
         match self {
             File::Dir(directory) => unsafe {
-                let file_entry =
-                    (*fat_fs).find_entry_in_directory(directory.directory_cluster, nm)?;
+                let file_entry = (*fat_fs).find_entry_in_directory(*directory, nm)?;
 
                 let file_typ = if file_entry.attributes == FileEntryAttributes::Directory as u8 {
                     crate::drivers::fs::vfs::VNodeType::Directory
@@ -695,11 +691,9 @@ impl VNodeOperations for File {
                 };
 
                 let file = if file_entry.attributes == FileEntryAttributes::Directory as u8 {
-                    File::Dir(FatDirectory {
-                        directory_cluster: file_entry.cluster() as usize,
-                    })
+                    File::Dir(file_entry.cluster() as usize)
                 } else {
-                    File::Archive(FatFile { file_entry })
+                    File::Archive(file_entry)
                 };
 
                 let vnode = VNode::new(Box::new(file), file_typ, (*vp.as_ptr()).parent_vfs);
@@ -788,16 +782,8 @@ impl VNodeOperations for File {
 
     fn len(&self, _vp: NonNull<VNode>) -> usize {
         match self {
-            File::Archive(archive) => archive.file_entry.file_size as usize,
+            File::Archive(archive) => archive.file_size as usize,
             _ => panic!("idk"),
         }
     }
-}
-
-struct FatFile {
-    file_entry: FileEntry,
-}
-
-struct FatDirectory {
-    directory_cluster: usize,
 }

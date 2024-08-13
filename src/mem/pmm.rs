@@ -31,27 +31,27 @@ impl PhysicalMemoryManager {
 
         let hhdm_req = HHDM_REQUEST
             .get_response()
-            .get()
             .expect("Failed to get Higher Half Direct Map!");
 
-        let hhdm_offset = hhdm_req.offset as usize;
+        let hhdm_offset = hhdm_req.offset() as usize;
 
         HHDM_OFFSET.set(hhdm_offset);
 
-        let memmap = MEMMAP_REQUEST
-            .get_response()
-            .get_mut()
-            .expect("Failed to get Memory map!")
-            .memmap_mut();
+        let memmap = unsafe {
+            MEMMAP_REQUEST
+                .get_response_mut()
+                .expect("Failed to get Memory map!")
+                .entries_mut()
+        };
 
         let mut highest_addr: usize = 0;
 
         for entry in memmap.iter() {
-            if entry.typ == limine::MemoryMapEntryType::Usable {
+            if entry.entry_type == limine::memory_map::EntryType::USABLE {
                 pmm.usable_pages
-                    .fetch_add(entry.len as usize / PAGE_SIZE, Ordering::SeqCst);
-                if highest_addr < (entry.base + entry.len) as usize {
-                    highest_addr = (entry.base + entry.len) as usize;
+                    .fetch_add(entry.length as usize / PAGE_SIZE, Ordering::SeqCst);
+                if highest_addr < (entry.base + entry.length) as usize {
+                    highest_addr = (entry.base + entry.length) as usize;
                 }
             }
         }
@@ -62,11 +62,11 @@ impl PhysicalMemoryManager {
             ((pmm.highest_page_idx.load(Ordering::SeqCst) / 8) + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
         for entry in memmap.iter_mut() {
-            if entry.typ != limine::MemoryMapEntryType::Usable {
+            if entry.entry_type != limine::memory_map::EntryType::USABLE {
                 continue;
             }
 
-            if entry.len as usize >= bitmap_size {
+            if entry.length as usize >= bitmap_size {
                 let ptr = (entry.base as usize + hhdm_offset) as *mut u8;
                 pmm.bitmap.store(ptr, Ordering::SeqCst);
 
@@ -75,7 +75,7 @@ impl PhysicalMemoryManager {
                     core::ptr::write_bytes(ptr, 0xFF, bitmap_size);
                 };
 
-                entry.len -= bitmap_size as u64;
+                entry.length -= bitmap_size as u64;
                 entry.base += bitmap_size as u64;
 
                 break;
@@ -83,11 +83,11 @@ impl PhysicalMemoryManager {
         }
 
         for entry in memmap.iter() {
-            if entry.typ != limine::MemoryMapEntryType::Usable {
+            if entry.entry_type != limine::memory_map::EntryType::USABLE {
                 continue;
             }
 
-            for i in 0..(entry.len as usize / PAGE_SIZE) {
+            for i in 0..(entry.length as usize / PAGE_SIZE) {
                 pmm.bitmap_reset((entry.base as usize + (i * PAGE_SIZE)) / PAGE_SIZE);
             }
         }
@@ -147,7 +147,7 @@ impl PhysicalMemoryManager {
         }
 
         unsafe {
-            core::ptr::write_bytes(ret, 0x00, pages * PAGE_SIZE);
+            core::ptr::write_bytes(ret.add(*HHDM_OFFSET), 0x00, pages * PAGE_SIZE);
         };
 
         return ret;

@@ -1,7 +1,5 @@
 use alloc::vec::Vec;
 
-use crate::libs::sync::Mutex;
-
 #[derive(Debug)]
 #[repr(u8)]
 enum ZlibCompressionLevel {
@@ -109,15 +107,6 @@ struct Huff {
     symbols: [u16; 288],
 }
 
-static FIXED_LENGTHS: Mutex<Huff> = Mutex::new(Huff {
-    counts: [0_u16; 16],
-    symbols: [0_u16; 288],
-});
-static FIXED_DISTS: Mutex<Huff> = Mutex::new(Huff {
-    counts: [0_u16; 16],
-    symbols: [0_u16; 288],
-});
-
 struct HuffRing {
     pointer: usize,
     data: Vec<u8>,
@@ -183,7 +172,16 @@ impl InflateContext {
     }
 
     pub fn decompress(&mut self) -> Result<Vec<u8>, ()> {
-        build_fixed();
+        let mut lengths = Huff {
+            counts: [0_u16; 16],
+            symbols: [0_u16; 288],
+        };
+        let mut dists = Huff {
+            counts: [0_u16; 16],
+            symbols: [0_u16; 288],
+        };
+
+        build_fixed(&mut lengths, &mut dists);
 
         loop {
             let is_final = self.get_bit();
@@ -194,7 +192,7 @@ impl InflateContext {
                     self.uncompressed()?;
                 }
                 0x01 => {
-                    self.inflate(&mut FIXED_LENGTHS.lock(), &mut FIXED_DISTS.lock())?;
+                    self.inflate(&mut lengths, &mut dists)?;
                 }
                 0x02 => {
                     self.decode_huffman()?;
@@ -418,7 +416,7 @@ fn build_huffman(lengths: &[u8], size: usize, out: &mut Huff) {
     }
 }
 
-fn build_fixed() {
+fn build_fixed(out_length: &mut Huff, out_dist: &mut Huff) {
     let mut lengths = [0_u8; 288];
 
     lengths[0..144].fill(8);
@@ -426,9 +424,9 @@ fn build_fixed() {
     lengths[256..280].fill(7);
     lengths[280..288].fill(8);
 
-    build_huffman(&lengths, 288, &mut FIXED_LENGTHS.lock());
+    build_huffman(&lengths, 288, out_length);
 
     lengths[0..30].fill(5);
 
-    build_huffman(&lengths, 30, &mut FIXED_DISTS.lock());
+    build_huffman(&lengths, 30, out_dist);
 }

@@ -64,7 +64,10 @@ pub struct ChunkReader<'a, F> {
     decompressor: F,
 }
 
-impl<'a, F: Fn(&[u8]) -> Result<Vec<u8>, ()>> ChunkReader<'a, F> {
+impl<'a, F> ChunkReader<'a, F>
+where
+    F: Fn(&[u8]) -> Result<Vec<u8>, ()>,
+{
     pub fn new(data: &'a [u8], decompressor: F) -> Self {
         let mut chunks: Vec<Chunk<'_>> = Vec::new();
 

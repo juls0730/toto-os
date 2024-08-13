@@ -1,11 +1,6 @@
 pub mod apic;
 pub mod exceptions;
 
-use crate::{
-    // arch::{apic, x86_common::pic::ChainedPics},
-    libs::sync::Mutex,
-};
-
 use self::apic::APIC;
 
 #[repr(C, packed)]
@@ -34,13 +29,15 @@ impl IdtEntry {
     }
 }
 
+impl !Sync for IdtEntry {}
+
 #[repr(C, packed)]
 struct IdtPtr {
     limit: u16,
     base: u64,
 }
 
-static IDT: Mutex<[IdtEntry; 256]> = Mutex::new([IdtEntry::new(); 256]);
+static mut IDT: [IdtEntry; 256] = [IdtEntry::new(); 256];
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -62,15 +59,17 @@ static mut IDT_PTR: IdtPtr = IdtPtr {
 
 pub fn idt_set_gate(num: u8, function_ptr: usize) {
     let base = function_ptr;
-    IDT.lock()[num as usize] = IdtEntry {
-        base_lo: (base & 0xFFFF) as u16,
-        base_mid: ((base >> 16) & 0xFFFF) as u16,
-        base_hi: ((base >> 32) & 0xFFFFFFFF) as u32,
-        sel: 0x28,
-        ist: 0,
-        always0: 0,
-        flags: 0xEE,
-    };
+    unsafe {
+        IDT[num as usize] = IdtEntry {
+            base_lo: (base & 0xFFFF) as u16,
+            base_mid: ((base >> 16) & 0xFFFF) as u16,
+            base_hi: ((base >> 32) & 0xFFFFFFFF) as u32,
+            sel: 0x28,
+            ist: 0,
+            always0: 0,
+            flags: 0xEE,
+        };
+    }
 
     // If the interrupt with this number occurred with the "null" interrupt handler
     // We will need to tell the PIC that interrupt is over, this stops new interrupts
@@ -83,31 +82,18 @@ extern "x86-interrupt" fn null_interrupt_handler() {
     signal_end_of_interrupt();
 }
 
-extern "x86-interrupt" fn timer_handler() {
-    // crate::usr::tty::puts(".");
-    signal_end_of_interrupt();
-}
-
 pub fn idt_init() {
     unsafe {
         let idt_size = core::mem::size_of::<IdtEntry>() * 256;
-        {
-            let mut idt_lock = IDT.lock();
-            IDT_PTR.base = idt_lock.as_ptr() as u64;
+        IDT_PTR.base = IDT.as_ptr() as u64;
 
-            core::ptr::write_bytes(
-                idt_lock.as_mut_ptr().cast::<core::ffi::c_void>(),
-                0,
-                idt_size,
-            );
-        }
+        core::ptr::write_bytes(IDT.as_mut_ptr().cast::<core::ffi::c_void>(), 0, idt_size);
 
         // Set every interrupt to the "null" interrupt handler (it does nothing)
         for num in 0..=255 {
             idt_set_gate(num, null_interrupt_handler as usize);
         }
 
-        idt_set_gate(InterruptIndex::Timer.as_u8(), timer_handler as usize);
         idt_set_gate(0x80, syscall as usize);
 
         core::arch::asm!(

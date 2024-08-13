@@ -632,6 +632,22 @@ pub trait VNodeOperations {
     // fn strategy(&mut self, bp: (), vp: NonNull<VNode>);
     // fn bread(&mut self, block_number: u32, vp: NonNull<VNode>) -> Arc<[u8]>;
     fn len(&self, vp: NonNull<VNode>) -> usize;
+
+    // TODO: not object safe
+    // fn get_fs<'a, T>(&self, vp: NonNull<VNode>) -> &'a mut T
+    // where
+    //     T: FsOps,
+    // {
+    //     unsafe {
+    //         let vfs = (*vp.as_ptr()).parent_vfs.as_mut();
+    //         let fs = vfs
+    //             .fs
+    //             .as_mut()
+    //             .expect("Tried to call get_fs on root VFS")
+    //             .as_mut() as *mut dyn FsOps;
+    //         &mut *fs.cast::<T>()
+    //     }
+    // }
 }
 
 #[allow(unused)]
@@ -667,7 +683,10 @@ pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
             return Err(());
         }
 
-        unsafe { NODE_TREE = Some(TreeNode::new(vfs.fs.as_mut().unwrap().as_mut().root(vfsp))) }
+        crate::println!("reading the root");
+        let root = vfs.fs.as_mut().unwrap().as_mut().root(vfsp);
+        crate::println!("successfully read the root");
+        unsafe { NODE_TREE = Some(TreeNode::new(root)) }
     } else {
         if unsafe { ROOT_VFS.next.is_none() } {
             return Err(());

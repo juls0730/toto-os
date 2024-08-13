@@ -36,43 +36,43 @@ struct Registers {
 extern "C" fn exception_handler(registers: u64) {
     let registers = unsafe { *(registers as *const Registers) };
 
-    crate::println!("{:X?}", registers);
+    // crate::println!("{:X?}", registers);
 
     let int = registers.int;
 
     match int {
         0x00 => {
-            log_error!("DIVISION ERROR!");
+            crate::drivers::serial::write_string("DIVISION ERROR!");
         }
         0x06 => {
-            log_error!("INVALID OPCODE!");
+            crate::drivers::serial::write_string("INVALID OPCODE!");
         }
         0x08 => {
-            log_error!("DOUBLE FAULT!");
+            crate::drivers::serial::write_string("DOUBLE FAULT!");
         }
         0x0D => {
-            log_error!("GENERAL PROTECTION FAULT!");
+            crate::drivers::serial::write_string("GENERAL PROTECTION FAULT!");
         }
         0x0E => {
-            log_error!("PAGE FAULT!");
+            crate::drivers::serial::write_string("PAGE FAULT!");
         }
         0xFF => {
-            log_error!("EXCEPTION!");
+            crate::drivers::serial::write_string("EXCEPTION!");
         }
         _ => {
-            log_error!("EXCEPTION!");
+            crate::drivers::serial::write_string("EXCEPTION!");
         }
     }
 
-    log_info!(
-        "INT: {:x} RIP: {:X}, CS: {:X}, EFLAGS: {:b}",
-        int,
-        registers.rip,
-        registers.cs,
-        registers.rflags
-    );
+    // log_info!(
+    //     "INT: {:x} RIP: {:X}, CS: {:X}, EFLAGS: {:b}",
+    //     int,
+    //     registers.rip,
+    //     registers.cs,
+    //     registers.rflags
+    // );
 
-    crate::arch::stack_trace::print_stack_trace(6, registers.rbp as u64);
+    // crate::arch::stack_trace::print_stack_trace(6, registers.rbp as u64);
 }
 
 // *macro intensifies*

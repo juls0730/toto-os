@@ -30,8 +30,14 @@ pub extern "x86-interrupt" fn keyboard_interrupt_handler() {
     let key = parse_key(scancode);
 
     if let Some(key) = key {
-        // crate::usr::shell::handle_key(key)
-        write_serial(key.character.unwrap() as u8);
+        if !key.pressed {
+            return;
+        }
+
+        if let Some(character) = key.character {
+            // crate::usr::shell::handle_key(key)
+            write_serial(character as u8);
+        }
     }
 }
 

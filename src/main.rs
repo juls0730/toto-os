@@ -1,18 +1,11 @@
-#![feature(
-    allocator_api,
-    abi_x86_interrupt,
-    naked_functions,
-    const_mut_refs,
-    negative_impls
-)]
+#![feature(abi_x86_interrupt, naked_functions, negative_impls)]
 #![allow(clippy::needless_return)]
 #![no_std]
 #![no_main]
 
-use core::ffi::CStr;
-
 use alloc::vec::Vec;
-use limine::KernelFileRequest;
+use limine::{request::KernelFileRequest, BaseRevision};
+use mem::HHDM_OFFSET;
 
 use crate::drivers::fs::{
     initramfs,
@@ -26,7 +19,15 @@ pub mod drivers;
 pub mod libs;
 pub mod mem;
 
-pub static KERNEL_REQUEST: KernelFileRequest = KernelFileRequest::new(0);
+// Be sure to mark all limine requests with #[used], otherwise they may be removed by the compiler.
+#[used]
+// The .requests section allows limine to find the requests faster and more safely.
+#[link_section = ".requests"]
+static BASE_REVISION: BaseRevision = BaseRevision::new();
+
+#[used]
+#[link_section = ".requests"]
+pub static KERNEL_REQUEST: KernelFileRequest = KernelFileRequest::new();
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
@@ -65,7 +66,7 @@ pub fn kmain() -> ! {
     crate::println!(
         "LIMINE BOOT: {:X?}",
         limine_dir
-            .lookup("limine.cfg")
+            .lookup("limine.conf")
             .unwrap()
             .open(0, UserCred { uid: 0, gid: 0 })
             .read(0, 0, 0)
@@ -82,7 +83,7 @@ pub fn kmain() -> ! {
             .unwrap()
             .lookup("limine")
             .unwrap()
-            .lookup("limine.cfg")
+            .lookup("limine.conf")
             .unwrap()
             .open(0, UserCred { uid: 0, gid: 0 })
             .read(0, 10, 0)
@@ -95,7 +96,7 @@ pub fn kmain() -> ! {
     crate::println!(
         "LIMINE BOOT: {:X?}",
         limine_dir
-            .lookup("limine.cfg")
+            .lookup("limine.conf")
             .unwrap()
             .open(0, UserCred { uid: 0, gid: 0 })
             .read(0, 0, 0)
@@ -132,20 +133,14 @@ fn draw_gradient() {
     let length = (fb.height * fb.width) * (fb.bpp / 8);
     let pages = length / crate::mem::pmm::PAGE_SIZE;
 
-    let buffer_ptr = crate::mem::PHYSICAL_MEMORY_MANAGER.alloc(pages);
+    let buffer_ptr =
+        (crate::mem::PHYSICAL_MEMORY_MANAGER.alloc(pages) as usize + *HHDM_OFFSET) as *mut u8;
 
     if buffer_ptr.is_null() {
         panic!("Failed to allocate screen buffer")
     }
 
-    let buffer = unsafe {
-        core::slice::from_raw_parts_mut(
-            crate::mem::PHYSICAL_MEMORY_MANAGER
-                .alloc(pages)
-                .cast::<u32>(),
-            length,
-        )
-    };
+    let buffer = unsafe { core::slice::from_raw_parts_mut(buffer_ptr.cast::<u32>(), length) };
 
     for y in 0..fb.height {
         for x in 0..fb.width {
@@ -160,7 +155,8 @@ fn draw_gradient() {
 
     fb.blit_screen(buffer, None);
 
-    crate::mem::PHYSICAL_MEMORY_MANAGER.dealloc(buffer_ptr, pages);
+    crate::mem::PHYSICAL_MEMORY_MANAGER
+        .dealloc((buffer_ptr as usize - *HHDM_OFFSET) as *mut u8, pages);
 }
 
 #[macro_export]
@@ -219,31 +215,15 @@ pub static KERNEL_FEATURES: libs::cell::OnceCell<KernelFeatures> = libs::cell::O
 fn parse_kernel_cmdline() {
     let mut kernel_features: KernelFeatures = KernelFeatures { fat_in_mem: true };
 
-    let kernel_file_response = KERNEL_REQUEST.get_response().get();
+    let kernel_file_response = KERNEL_REQUEST.get_response();
     if kernel_file_response.is_none() {
         KERNEL_FEATURES.set(kernel_features);
         return;
     }
 
-    let cmdline_ptr = kernel_file_response
-        .unwrap()
-        .kernel_file
-        .get()
-        .unwrap()
-        .cmdline
-        .as_ptr();
+    let cmdline = core::str::from_utf8(kernel_file_response.unwrap().file().cmdline());
 
-    if cmdline_ptr.is_none() {
-        KERNEL_FEATURES.set(kernel_features);
-        return;
-    }
-
-    let cmdline = unsafe { CStr::from_ptr(cmdline_ptr.unwrap()) };
-    let kernel_arguments = cmdline
-        .to_str()
-        .unwrap()
-        .split_whitespace()
-        .collect::<Vec<&str>>();
+    let kernel_arguments = cmdline.unwrap().split_whitespace().collect::<Vec<&str>>();
 
     crate::println!("{kernel_arguments:?}");
 

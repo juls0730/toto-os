@@ -5,8 +5,14 @@ use crate::libs::{cell::OnceCell, sync::Mutex};
 
 use self::{allocator::LinkedListAllocator, pmm::PhysicalMemoryManager};
 
-static MEMMAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0);
-static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
+#[used]
+#[link_section = ".requests"]
+static mut MEMMAP_REQUEST: limine::request::MemoryMapRequest =
+    limine::request::MemoryMapRequest::new();
+
+#[used]
+#[link_section = ".requests"]
+static HHDM_REQUEST: limine::request::HhdmRequest = limine::request::HhdmRequest::new();
 pub static HHDM_OFFSET: OnceCell<usize> = OnceCell::new();
 
 pub static PHYSICAL_MEMORY_MANAGER: OnceCell<PhysicalMemoryManager> = OnceCell::new();
@@ -21,26 +27,27 @@ const HEAP_PAGES: usize = 1024; // 4 MiB heap
 #[global_allocator]
 pub static ALLOCATOR: Mutex<LinkedListAllocator> = Mutex::new(LinkedListAllocator::new());
 
-pub fn log_memory_map() {
-    let memmap_request = MEMMAP_REQUEST.get_response().get_mut();
-    if memmap_request.is_none() {
-        panic!("Memory map was None!");
-    }
+// TODO: Limine-rs 0.2.0 does NOT have debug implemented for a lot of it's types, so until that is fixed, either go without Type, or hack limine-rs locally
+// pub fn log_memory_map() {
+//     let memmap_request = unsafe { MEMMAP_REQUEST.get_response_mut() };
+//     if memmap_request.is_none() {
+//         panic!("Memory map was None!");
+//     }
 
-    let memmap = memmap_request.unwrap().memmap();
+//     let memmap = memmap_request.unwrap().entries();
 
-    crate::log_serial!("====== MEMORY MAP ======\n");
-    for entry in memmap.iter() {
-        let label = (entry.len as usize).label_bytes();
+//     crate::log_serial!("====== MEMORY MAP ======\n");
+//     for entry in memmap.iter() {
+//         let label = (entry.length as usize).label_bytes();
 
-        crate::log_serial!(
-            "[ {:#018X?} ] Type: {:?} Size: {}\n",
-            entry.base..entry.base + entry.len,
-            entry.typ,
-            label
-        )
-    }
-}
+//         crate::log_serial!(
+//             "[ {:#018X?} ] Type: {:?} Size: {}\n",
+//             entry.base..entry.base + entry.length,
+//             entry.entry_type,
+//             label
+//         )
+//     }
+// }
 
 pub fn init_allocator() {
     let mut allocator_lock = ALLOCATOR.lock();
@@ -51,7 +58,9 @@ pub fn init_allocator() {
     crate::println!(
         "{} of memory available",
         PHYSICAL_MEMORY_MANAGER.total_memory().label_bytes()
-    )
+    );
+
+    // log_memory_map();
 }
 
 pub enum Label {

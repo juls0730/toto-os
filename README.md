@@ -49,7 +49,7 @@ Before building CappuccinOS, make sure you have the following installed on your 
 - rust
 - python
 - sgdisk
-- mtools
+- dosfstools
 - squashfs-tools
 - qemu (optional)
 
@@ -71,7 +71,7 @@ Install the dependencies:
 <details>
     <summary>Arch</summary>
 
-    sudo pacman -S gptfdisk mtools squashfs-tools python
+    sudo pacman -S gptfdisk dosfstools squashfs-tools python
     # Optionally
     sudo pacman -S qemu-system-x86
 
@@ -81,7 +81,7 @@ Install the dependencies:
     <summary>Ubuntu</summary>
     Python should be installed by default, and if it's not, make an issue or a PR and I'll fix it
 
-    sudo apt install gdisk mtools squashfs-tools
+    sudo apt install gdisk dosfstools squashfs-tools
     # Optionally
     sudo apt install qemu
 
