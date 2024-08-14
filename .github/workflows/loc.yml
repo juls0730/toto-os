@@ -1,8 +1,8 @@
-name: Count LOC 
+name: Count LOC
 
 on:
   push:
-    branches: [ "main", "nightly" ]
+    branches: ["trunk"]
 
 jobs:
   count-loc:
