@@ -1,8 +1,8 @@
 name: RustFmt
 
-on: 
+on:
   push:
-    branches: [ "main" ]
+    branches: ["trunk"]
 
 jobs:
   format:

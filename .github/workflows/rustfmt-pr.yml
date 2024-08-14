@@ -1,8 +1,8 @@
 name: Rustfmt
 
-on: 
+on:
   pull_request:
-    branches: [ "main" ]
+    branches: ["trunk"]
 
 jobs:
   format:

@@ -27,7 +27,7 @@ jobs:
     steps:
       - env:
           LOC: ${{needs.count-loc.outputs.loc}}
-        uses: Schneegans/dynamic-badges-action@v1.6.0
+        uses: Schneegans/dynamic-badges-action@v1.7.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: c16f26c4c5ab7f613fe758c913f9e71f

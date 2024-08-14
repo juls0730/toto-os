@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["trunk"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["trunk"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,15 +13,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Set nightly rust
-      run: rustup override set nightly
-    - name: Add x86_64 target
-      run: rustup target add x86_64-unknown-none
-    - name: Install rust-src
-      run: rustup component add rust-src
-    - name: Build
-      run: cargo build --verbose
+      - uses: actions/checkout@v3
+      - name: Set nightly rust
+        run: rustup override set nightly
+      - name: Add x86_64 target
+        run: rustup target add x86_64-unknown-none
+      - name: Install rust-src
+        run: rustup component add rust-src
+      - name: Build
+        run: cargo build --verbose
     # TODO: testing
     #- name: Run tests
     #  run: cargo test --verbose
