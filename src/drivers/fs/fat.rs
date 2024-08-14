@@ -7,7 +7,7 @@ use alloc::{
     vec::Vec,
 };
 
-use crate::drivers::storage::Partition;
+use crate::{drivers::storage::Partition, LogLevel};
 
 use super::vfs::{FsOps, VNode, VNodeOperations};
 
@@ -267,7 +267,7 @@ impl FatFs {
             _ => bpb.sectors_per_fat as usize,
         };
 
-        crate::println!("Found {fat_type:?} FS");
+        // crate::println!("Found {fat_type:?} FS");
 
         let cluster_size = bpb.sectors_per_cluster as usize * 512;
 
@@ -508,8 +508,9 @@ impl FsOps for FatFs {
 
             fat = Some(Arc::from(fat_vec));
         } else {
-            crate::log_info!(
-                "\x1B[33mWARNING\x1B[0m: FAT is not being stored in memory, this feature is experimental and file reads are expected to be slower."
+            crate::log!(
+                LogLevel::Warn,
+                "FAT is not being stored in memory, this feature is experimental and file reads are expected to be slower."
             )
         }
 

@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use limine::request::RsdpRequest;
 use limine::request::SmpRequest;
 
+use crate::LogLevel;
 use crate::{
     arch::io::{inw, outb},
     libs::cell::OnceCell,
@@ -45,7 +46,7 @@ impl<'a, T> SDT<'a, T> {
         let length = core::ptr::read_unaligned(ptr.add(4).cast::<u32>());
         let data = core::slice::from_raw_parts(ptr, length as usize);
 
-        crate::log_serial!("SDT at: {ptr:p}\n");
+        crate::log!(LogLevel::Trace, "SDT at: {ptr:p}");
 
         assert!(data.len() == length as usize);
 
@@ -267,11 +268,15 @@ struct FADT {
 pub fn init_acpi() {
     resolve_acpi();
 
-    crate::log_ok!("Found {} ACPI Tables!", ACPI.tables.len());
+    crate::log!(LogLevel::Trace, "Found {} ACPI Tables!", ACPI.tables.len());
 
-    crate::log_serial!("Available serial tables:\n");
+    crate::log!(LogLevel::Trace, "Available ACPI tables:");
     for i in 0..ACPI.tables.len() {
-        crate::log_serial!("    {}\n", core::str::from_utf8(&ACPI.tables[i]).unwrap());
+        crate::log!(
+            LogLevel::Trace,
+            "    {}",
+            core::str::from_utf8(&ACPI.tables[i]).unwrap()
+        );
     }
 
     let fadt = find_table::<FADT>("FACP").expect("Failed to find FADT");
@@ -283,7 +288,7 @@ pub fn init_acpi() {
     #[cfg(target_arch = "x86_64")]
     crate::arch::interrupts::apic::APIC
         .set(crate::arch::interrupts::apic::APIC::new().expect("Failed to enable APIC!"));
-    crate::log_ok!("APIC enabled!");
+    crate::log!(LogLevel::Trace, "APIC enabled!");
 }
 
 pub fn find_table<T>(table_name: &str) -> Option<SDT<T>> {

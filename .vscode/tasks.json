@@ -1,0 +1,25 @@
+{
+    "tasks": [
+      {
+        "type": "shell",
+        "label": "(Debug) Build the kernel and run qemu",
+        "command": "make",
+        "args": [
+          "run"
+        ],
+        "options": {
+            "env": {
+                "MODE": "debug",
+                "GDB": "true"
+            },
+         "cwd": "${workspaceRoot}",
+        },
+        "group": {
+            "kind": "build",
+            "isDefault": true
+        }
+      }
+    ],
+    "version": "2.0.0"
+  }
+  

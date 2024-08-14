@@ -22,6 +22,8 @@ QEMU_OPTS += -m ${MEMORY} -drive id=hd0,format=raw,file=${IMAGE_PATH}
 LIMINE_BOOT_VARIATION = X64
 LIMINE_BRANCH = v8.x-binary
 
+KERNEL_FILE = target/${ARCH}-unknown-none/${MODE}/CappuccinOS.elf
+
 ifeq (${MODE},release)
 	CARGO_OPTS += --release
 endif
@@ -87,8 +89,12 @@ compile-initramfs: copy-initramfs-files
 		mksquashfs ${INITRAMFS_PATH} ${ARTIFACTS_PATH}/initramfs.img ${MKSQUASHFS_OPTS}
 
 run-scripts:
+		# Place the build ID into the binary so it can be read at runtime
+		@HASH=$$(md5sum ${KERNEL_FILE} | cut -c1-12) && \
+		sed -i "s/__BUILD_ID__/$${HASH}/" ${KERNEL_FILE}
+
 ifeq (${EXPORT_SYMBOLS},true)
-		nm target/${ARCH}-unknown-none/${MODE}/CappuccinOS.elf > scripts/symbols.table
+		nm ${KERNEL_FILE} > scripts/symbols.table
 		@if [ ! -d "scripts/rustc_demangle" ]; then \
 			git clone "https://github.com/juls0730/rustc_demangle.py" "scripts/rustc_demangle"; \
 		fi
@@ -190,7 +196,7 @@ ovmf-aarch64:
 run: build ${RUN_OPTS} run-${ARCH}
 
 run-x86_64:
-	qemu-system-x86_64 ${QEMU_OPTS}
+	tmux new-session -d -s qemu 'qemu-system-x86_64 ${QEMU_OPTS}'
 
 run-riscv64:
 	qemu-system-riscv64 ${QEMU_OPTS} -cpu rv64 -device ramfb -device qemu-xhci -device usb-kbd -device virtio-scsi-pci,id=scsi -device scsi-hd,drive=hd0

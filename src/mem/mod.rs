@@ -55,56 +55,75 @@ pub fn init_allocator() {
 
     drop(allocator_lock);
 
-    crate::println!(
-        "{} of memory available",
-        PHYSICAL_MEMORY_MANAGER.total_memory().label_bytes()
-    );
-
     // log_memory_map();
 }
 
-pub enum Label {
-    BYTE(usize),
-    KIB(usize),
-    MIB(usize),
-    GIB(usize),
+pub enum ByteLabelKind {
+    BYTE,
+    KIB,
+    MIB,
+    GIB,
 }
 
-impl core::fmt::Display for Label {
+pub struct ByteLabel {
+    byte_label: ByteLabelKind,
+    count: usize,
+}
+
+impl core::fmt::Display for ByteLabel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Label::BYTE(count) => {
-                write!(f, "{count} Byte(s)")
+        let size = self.count;
+
+        match self.byte_label {
+            ByteLabelKind::BYTE => {
+                write!(f, "{size} Byte")?;
             }
-            Label::KIB(count) => {
-                write!(f, "{count} KiB(s)")
+            ByteLabelKind::KIB => {
+                write!(f, "{size} KiB")?;
             }
-            Label::MIB(count) => {
-                write!(f, "{count} MiB(s)")
+            ByteLabelKind::MIB => {
+                write!(f, "{size} MiB")?;
             }
-            Label::GIB(count) => {
-                write!(f, "{count} GiB(s)")
+            ByteLabelKind::GIB => {
+                write!(f, "{size} GiB")?;
             }
         }
+
+        if size != 1 {
+            write!(f, "s")?;
+        }
+
+        return Ok(());
     }
 }
 pub trait LabelBytes {
-    fn label_bytes(&self) -> Label;
+    fn label_bytes(&self) -> ByteLabel;
 }
 
 impl LabelBytes for usize {
-    fn label_bytes(&self) -> Label {
+    fn label_bytes(&self) -> ByteLabel {
         let bytes = *self;
 
+        let mut byte_label = ByteLabel {
+            byte_label: ByteLabelKind::BYTE,
+            count: bytes,
+        };
+
         if bytes >> 30 > 0 {
-            return Label::GIB(bytes >> 30);
+            byte_label.byte_label = ByteLabelKind::GIB;
+            byte_label.count = bytes >> 30;
+            // return Label::GIB(bytes >> 30);
         } else if bytes >> 20 > 0 {
-            return Label::MIB(bytes >> 20);
+            byte_label.byte_label = ByteLabelKind::MIB;
+            byte_label.count = bytes >> 20;
+            // return Label::MIB(bytes >> 20);
         } else if bytes >> 10 > 0 {
-            return Label::KIB(bytes >> 10);
-        } else {
-            return Label::BYTE(bytes);
+            byte_label.byte_label = ByteLabelKind::KIB;
+            byte_label.count = bytes >> 10;
+            // return Label::KIB(bytes >> 10);
         }
+
+        return byte_label;
     }
 }
 

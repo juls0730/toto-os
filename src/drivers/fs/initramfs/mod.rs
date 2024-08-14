@@ -336,7 +336,10 @@ impl Squashfs<'_> {
                     );
                 }
                 _ => {
-                    crate::println!("Unsupported compression type")
+                    crate::log!(
+                        crate::LogLevel::Error,
+                        "Unsupported squashfs compression type"
+                    )
                 }
             }
         } else {

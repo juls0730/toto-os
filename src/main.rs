@@ -5,7 +5,7 @@
 
 use alloc::vec::Vec;
 use limine::{request::KernelFileRequest, BaseRevision};
-use mem::HHDM_OFFSET;
+use mem::{LabelBytes, HHDM_OFFSET, PHYSICAL_MEMORY_MANAGER};
 
 use crate::drivers::fs::{
     initramfs,
@@ -18,6 +18,11 @@ pub mod arch;
 pub mod drivers;
 pub mod libs;
 pub mod mem;
+
+// the build id will be an md5sum of the kernel binary and will replace __BUILD_ID__ in the final binary
+pub static BUILD_ID: &str = "__BUILD_ID__";
+
+pub static LOG_LEVEL: u8 = if cfg!(debug_assertions) { 1 } else { 2 };
 
 // Be sure to mark all limine requests with #[used], otherwise they may be removed by the compiler.
 #[used]
@@ -47,6 +52,8 @@ pub extern "C" fn _start() -> ! {
 }
 
 pub fn kmain() -> ! {
+    print_boot_info();
+
     let _ = drivers::fs::vfs::add_vfs("/", alloc::boxed::Box::new(initramfs::init()));
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -101,10 +108,6 @@ pub fn kmain() -> ! {
             .open(0, UserCred { uid: 0, gid: 0 })
             .read(0, 0, 0)
     );
-
-    unsafe {
-        *(0xDEADBEEF as *mut u32) = 0xBAADF00D;
-    };
 
     // let file = vfs_open("/example.txt").unwrap();
 
@@ -163,6 +166,26 @@ fn draw_gradient() {
         .dealloc((buffer_ptr as usize - *HHDM_OFFSET) as *mut u8, pages);
 }
 
+fn print_boot_info() {
+    crate::println!("╔═╗───────────────────╔╗────╔═╗╔══╗");
+    crate::println!("║╔╝╔═╗ ╔═╗╔═╗╔╦╗╔═╗╔═╗╠╣╔═╦╗║║║║══╣");
+    crate::println!("║╚╗║╬╚╗║╬║║╬║║║║║═╣║═╣║║║║║║║║║╠══║");
+    crate::println!("╚═╝╚══╝║╔╝║╔╝╚═╝╚═╝╚═╝╚╝╚╩═╝╚═╝╚══╝");
+    crate::println!("───────╚╝─╚╝ ©juls0730 {BUILD_ID}");
+    crate::println!(
+        "{} of memory available",
+        PHYSICAL_MEMORY_MANAGER.total_memory().label_bytes()
+    );
+    crate::println!(
+        "The kernel was built in {} mode",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    )
+}
+
 #[macro_export]
 macro_rules! println {
     () => ($crate::print!("\n"));
@@ -176,26 +199,31 @@ macro_rules! print {
     )
 }
 
-#[macro_export]
-macro_rules! log_info {
-    ($($arg:tt)*) => ($crate::println!("\x1B[97m[ \x1B[90m? \x1B[97m]\x1B[0m {}", &alloc::format!($($arg)*)));
+#[repr(u8)]
+enum LogLevel {
+    Trace = 0,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
 }
 
 #[macro_export]
-macro_rules! log_serial {
-    ($($arg:tt)*) => (
-            $crate::drivers::serial::write_string(&alloc::format!($($arg)*).replace('\n', "\n\r"))
-    );
-}
-
-#[macro_export]
-macro_rules! log_error {
-    ($($arg:tt)*) => ($crate::println!("\x1B[97m[ \x1B[91m! \x1B[97m]\x1B[0m {}", &alloc::format!($($arg)*)));
-}
-
-#[macro_export]
-macro_rules! log_ok {
-    ($($arg:tt)*) => ($crate::println!("\x1B[97m[ \x1B[92m* \x1B[97m]\x1B[0;m {}", &alloc::format!($($arg)*)));
+macro_rules! log {
+    ($level:expr, $($arg:tt)*) => {{
+        if ($level as u8) >= $crate::LOG_LEVEL {
+            let color_code = match $level {
+                $crate::LogLevel::Trace => "\x1B[90m",
+                $crate::LogLevel::Debug =>  "\x1B[94m",
+                $crate::LogLevel::Info =>  "\x1B[92m",
+                $crate::LogLevel::Warn =>  "\x1B[93m",
+                $crate::LogLevel::Error =>  "\x1B[91m",
+                $crate::LogLevel::Fatal =>  "\x1B[95m",
+            };
+            $crate::println!("\x1B[97m[ {}* \x1B[97m]\x1B[0;m {}", color_code, &alloc::format!($($arg)*))
+        }
+    }};
 }
 
 #[derive(Debug)]
@@ -229,7 +257,7 @@ fn parse_kernel_cmdline() {
 
     let kernel_arguments = cmdline.unwrap().split_whitespace().collect::<Vec<&str>>();
 
-    crate::println!("{kernel_arguments:?}");
+    // crate::log!(LogLevel::Trace, "{kernel_arguments:?}");
 
     for item in kernel_arguments {
         let parts: Vec<&str> = item.split('=').collect();

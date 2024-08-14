@@ -8,7 +8,7 @@ use alloc::{
     vec::Vec,
 };
 
-use crate::{log_info, log_ok};
+use crate::{log, LogLevel};
 
 static mut NODE_TREE: Option<TreeNode> = None;
 static mut ROOT_VFS: Vfs = Vfs::null();
@@ -676,16 +676,14 @@ pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
 
     let vfsp = vfs.as_ptr();
 
-    log_info!("Adding vfs at {mount_point}");
+    log!(LogLevel::Trace, "Adding vfs at {mount_point}");
 
     if mount_point == "/" {
         if unsafe { ROOT_VFS.next.is_some() } {
             return Err(());
         }
 
-        crate::println!("reading the root");
         let root = vfs.fs.as_mut().unwrap().as_mut().root(vfsp);
-        crate::println!("successfully read the root");
         unsafe { NODE_TREE = Some(TreeNode::new(root)) }
     } else {
         if unsafe { ROOT_VFS.next.is_none() } {
@@ -705,7 +703,7 @@ pub fn add_vfs(mount_point: &str, fs_ops: Box<dyn FsOps>) -> Result<(), ()> {
 
     unsafe { ROOT_VFS.add_vfs(vfs) };
 
-    log_ok!("Added vfs at {mount_point}");
+    log!(LogLevel::Trace, "Added vfs at {mount_point}");
 
     return Ok(());
 }
@@ -756,7 +754,7 @@ pub fn del_vfs(mount_point: &str) -> Result<(), ()> {
         return Err(());
     }
 
-    log_info!("Deleting vfs at {mount_point}");
+    log!(LogLevel::Trace, "Deleting vfs at {mount_point}");
 
     if mount_point == "/" {
         if unsafe { ROOT_VFS.next.as_ref().unwrap().next.is_some() } {

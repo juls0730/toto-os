@@ -1,8 +1,7 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use super::idt_set_gate;
-use crate::hcf;
-use crate::{log_error, log_info};
+use crate::{hcf, log, LogLevel};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -43,7 +42,7 @@ extern "C" fn exception_handler(registers: u64) {
     match FAULTED.fetch_add(1, Ordering::SeqCst) {
         0 => {}
         1 => {
-            log_error!("Exception Loop detected, stopping here");
+            log!(LogLevel::Fatal, "Exception Loop detected, stopping here");
             print_registers(&registers);
             hcf();
         }
@@ -55,25 +54,25 @@ extern "C" fn exception_handler(registers: u64) {
 
     match int {
         0x00 => {
-            log_error!("DIVISION ERROR!");
+            log!(LogLevel::Fatal, "DIVISION ERROR!");
         }
         0x06 => {
-            log_error!("INVALID OPCODE!");
+            log!(LogLevel::Fatal, "INVALID OPCODE!");
         }
         0x08 => {
-            log_error!("DOUBLE FAULT!");
+            log!(LogLevel::Fatal, "DOUBLE FAULT!");
         }
         0x0D => {
-            log_error!("GENERAL PROTECTION FAULT!");
+            log!(LogLevel::Fatal, "GENERAL PROTECTION FAULT!");
         }
         0x0E => {
-            log_error!("PAGE FAULT!");
+            log!(LogLevel::Fatal, "PAGE FAULT!");
         }
         0xFF => {
-            log_error!("EXCEPTION!");
+            log!(LogLevel::Fatal, "EXCEPTION!");
         }
         _ => {
-            log_error!("EXCEPTION!");
+            log!(LogLevel::Fatal, "EXCEPTION!");
         }
     }
 
@@ -83,9 +82,10 @@ extern "C" fn exception_handler(registers: u64) {
 }
 
 fn print_registers(registers: &Registers) {
-    log_info!("{:-^width$}", " REGISTERS ", width = 98);
+    log!(LogLevel::Info, "{:-^width$}", " REGISTERS ", width = 98);
 
-    log_info!(
+    log!(
+        LogLevel::Info,
         "INT: {:#018X}, RIP: {:#018X},  CS: {:#018X}, FLG: {:#018X}",
         registers.int,
         registers.rip,
@@ -93,7 +93,8 @@ fn print_registers(registers: &Registers) {
         registers.rflags
     );
 
-    log_info!(
+    log!(
+        LogLevel::Info,
         "RSP: {:#018X},  SS: {:#018X}, RAX: {:#018X}, RBX: {:#018X}",
         registers.rsp,
         registers.ss,
@@ -101,7 +102,8 @@ fn print_registers(registers: &Registers) {
         registers.rbx
     );
 
-    log_info!(
+    log!(
+        LogLevel::Info,
         "RCX: {:#018X}, RDX: {:#018X}, RSI: {:#018X}, RDI: {:#018X}",
         registers.rcx,
         registers.rdx,
@@ -109,7 +111,8 @@ fn print_registers(registers: &Registers) {
         registers.rdi
     );
 
-    log_info!(
+    log!(
+        LogLevel::Info,
         "RBP: {:#018X},  R8: {:#018X},  R9: {:#018X}, R10: {:#018X}",
         registers.rbp,
         registers.r8,
@@ -117,7 +120,8 @@ fn print_registers(registers: &Registers) {
         registers.r10
     );
 
-    log_info!(
+    log!(
+        LogLevel::Info,
         "R11: {:#018X}, R12: {:#018X}, R13: {:#018X}, R14: {:#018X}",
         registers.r11,
         registers.r12,
@@ -125,7 +129,7 @@ fn print_registers(registers: &Registers) {
         registers.r14
     );
 
-    log_info!("R15: {:#018X}", registers.r15);
+    log!(LogLevel::Info, "R15: {:#018X}", registers.r15);
 }
 
 // *macro intensifies*

@@ -9,6 +9,8 @@ use crate::{
         storage::{GPTHeader, GPTPartitionEntry, Partition, MBR},
     },
     libs::{sync::Mutex, uuid::Uuid},
+    mem::LabelBytes,
+    LogLevel,
 };
 
 use super::BlockDevice;
@@ -278,7 +280,7 @@ impl ATABus {
         let mut buffer = [0u8; ATA_SECTOR_SIZE];
 
         self.wait_for_drive_ready()
-            .map_err(|_| crate::log_error!("Error before issuing Identify command."))?;
+            .map_err(|_| crate::log!(LogLevel::Error, "Error before issuing Identify command."))?;
 
         for chunk in buffer.chunks_exact_mut(core::mem::size_of::<u16>()) {
             let word = inw(self.io_bar + ATADriveDataRegister::Data as u16);
@@ -423,7 +425,7 @@ impl ATABus {
         let mut buffer_offset = 0;
         for _ in 0..sector_count {
             self.wait_for_drive_ready()
-                .map_err(|_| crate::log_error!("Error reading IDE Device"))?;
+                .map_err(|_| crate::log!(LogLevel::Error, "Error reading IDE Device"))?;
 
             // # Safety
             //
@@ -563,7 +565,8 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
         }
     }
 
-    crate::log_info!(
+    crate::log!(
+        LogLevel::Trace,
         "ATA: Detected {} drive{}",
         drives_lock.len(),
         match drives_lock.len() {
@@ -575,10 +578,11 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
     for drive in drives_lock.iter() {
         let sectors = drive.sector_count();
 
-        crate::log_info!(
-            "ATA: Drive 0 has {} sectors ({} MB)",
+        crate::log!(
+            LogLevel::Trace,
+            "ATA: Drive 0 has {} sectors ({})",
             sectors,
-            (sectors * ATA_SECTOR_SIZE as u64) / 1024 / 1024
+            ((sectors as usize) * ATA_SECTOR_SIZE).label_bytes()
         );
 
         let mbr_sector: MBR = (*drive.read(0, 1).expect("Failed to read first sector")).into();
@@ -609,13 +613,13 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
             )
             .expect("Failed to read partition table");
 
-        crate::println!(
-            "{}, {}, {}, {:X?}",
-            (gpt.partition_entry_count * gpt.partition_entry_size) as usize / ATA_SECTOR_SIZE,
-            gpt.partition_entry_count,
-            gpt.partition_entry_size,
-            gpt.guid
-        );
+        // crate::println!(
+        //     "{}, {}, {}, {:X?}",
+        //     (gpt.partition_entry_count * gpt.partition_entry_size) as usize / ATA_SECTOR_SIZE,
+        //     gpt.partition_entry_count,
+        //     gpt.partition_entry_size,
+        //     gpt.guid
+        // );
 
         for i in 0..gpt.partition_entry_count {
             let entry_offset = (i * gpt.partition_entry_size) as usize;

@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use crate::{
     arch::io::{inl, outl},
     libs::sync::Mutex,
+    LogLevel,
 };
 
 const PCI_CONFIG_PORT: u16 = 0xCF8; // The base I/O port for PCI configuration access
@@ -130,9 +131,9 @@ pub fn enumerate_pci_bus() {
         check_bus(bus);
     }
 
-    crate::println!("====== PCI DEVICES ======");
+    crate::log!(LogLevel::Debug, "====== PCI DEVICES ======");
     for (i, pci_device) in PCI_DEVICES.lock().iter().enumerate() {
-        crate::println!("Entry {i:2}: {pci_device}")
+        crate::log!(LogLevel::Debug, "Entry {i:2}: {pci_device}")
     }
 }
 

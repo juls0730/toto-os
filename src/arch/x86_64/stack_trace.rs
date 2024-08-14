@@ -2,8 +2,9 @@ use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
 use crate::{
     drivers::fs::vfs::{vfs_open, UserCred},
-    log_info,
+    log,
     mem::HHDM_OFFSET,
+    LogLevel,
 };
 
 // use crate::drivers::fs::vfs::VfsFileSystem;
@@ -19,7 +20,7 @@ pub fn print_stack_trace(max_frames: usize, rbp: u64) {
     let mut stackframe = rbp as *const StackFrame;
     let mut frames_processed = 0;
 
-    log_info!("{:-^width$}", " Stack Trace ", width = 98);
+    log!(LogLevel::Info, "{:-^width$}", " Stack Trace ", width = 98);
     for _ in 0..max_frames {
         frames_processed += 1;
 
@@ -44,7 +45,7 @@ pub fn print_stack_trace(max_frames: usize, rbp: u64) {
             ""
         };
 
-        log_info!("{:#X} {address_info}", instruction_ptr);
+        log!(LogLevel::Info, "{:#X} {address_info}", instruction_ptr);
 
         unsafe {
             stackframe = (*stackframe).back;
@@ -52,7 +53,7 @@ pub fn print_stack_trace(max_frames: usize, rbp: u64) {
     }
 
     if frames_processed == max_frames && !stackframe.is_null() {
-        log_info!("... <frames omitted>");
+        log!(LogLevel::Info, "... <frames omitted>");
     }
 }
 

@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "gdb",
+            "request": "attach",
+            "name": "Attach to QEMU",
+            "preLaunchTask": "(Debug) Build the kernel and run qemu",
+            "executable": "${workspaceFolder}/target/x86_64-unknown-none/debug/CappuccinOS.elf",
+            "target": ":1234",
+            "remote": true,
+            "cwd": "${workspaceRoot}",
+            // "gdbpath": "${workspaceRoot}/target/x86_64-unknown-none/debug/CappuccinOS.elf"
+        }
+    ]
+}

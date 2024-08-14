@@ -1,4 +1,4 @@
-use crate::{drivers::acpi::SMP_REQUEST, hcf, libs::cell::OnceCell, mem::HHDM_OFFSET};
+use crate::{drivers::acpi::SMP_REQUEST, hcf, libs::cell::OnceCell, mem::HHDM_OFFSET, LogLevel};
 
 use alloc::{sync::Arc, vec::Vec};
 
@@ -67,7 +67,7 @@ pub struct APIC {
 }
 
 unsafe extern "C" fn test<'a>(cpu: &'a limine::smp::Cpu) -> ! {
-    crate::log_ok!("hey from CPU {:<02}", cpu.id);
+    crate::log!(LogLevel::Debug, "hey from CPU {:<02}", cpu.id);
 
     hcf();
 }
@@ -94,7 +94,11 @@ impl APIC {
 
         let madt = madt.unwrap();
 
-        crate::log_info!("MADT located at: {:p}", core::ptr::addr_of!(madt));
+        crate::log!(
+            LogLevel::Trace,
+            "MADT located at: {:p}",
+            core::ptr::addr_of!(madt)
+        );
 
         let mut lapic_ptr = (madt.inner.local_apic_address as usize + *HHDM_OFFSET) as *mut u8;
         let mut io_apic = None;
@@ -149,7 +153,8 @@ impl APIC {
 
         let io_apic_ptr = io_apic.unwrap().ptr;
 
-        crate::println!(
+        crate::log!(
+            LogLevel::Debug,
             "Found {} core{}, IOAPIC {:p}, LAPIC {lapic_ptr:p}, Processor IDs:",
             cpus.len(),
             if cpus.len() > 1 { "s" } else { "" },
@@ -157,7 +162,7 @@ impl APIC {
         );
 
         for apic in &cpus {
-            crate::println!("    {}", apic.acpi_processor_id);
+            crate::log!(LogLevel::Debug, "    {}", apic.acpi_processor_id);
         }
 
         let apic = Self {
@@ -171,9 +176,9 @@ impl APIC {
 
         let io_apic_ver = apic.read_ioapic(0x01);
 
-        let number_of_inputs = ((io_apic_ver >> 16) & 0xFF) + 1;
+        let _number_of_inputs = ((io_apic_ver >> 16) & 0xFF) + 1;
 
-        crate::println!("{number_of_inputs}");
+        // crate::println!("{number_of_inputs}");
 
         let smp_request = unsafe { SMP_REQUEST.get_response_mut() };
 

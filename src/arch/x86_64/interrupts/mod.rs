@@ -1,6 +1,8 @@
 pub mod apic;
 pub mod exceptions;
 
+use crate::LogLevel;
+
 use self::apic::APIC;
 
 #[repr(C, packed)]
@@ -78,7 +80,7 @@ pub fn idt_set_gate(num: u8, function_ptr: usize) {
 }
 
 extern "x86-interrupt" fn null_interrupt_handler() {
-    crate::log_info!("Unhandled interrupt!");
+    crate::log!(LogLevel::Debug, "Unhandled interrupt!");
     signal_end_of_interrupt();
 }
 
