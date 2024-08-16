@@ -1,7 +1,10 @@
 pub mod allocator;
 pub mod pmm;
 
-use crate::libs::{cell::OnceCell, sync::Mutex};
+use crate::{
+    libs::{cell::OnceCell, sync::Mutex},
+    // LogLevel,
+};
 
 use self::{allocator::LinkedListAllocator, pmm::PhysicalMemoryManager};
 
@@ -36,12 +39,13 @@ pub static ALLOCATOR: Mutex<LinkedListAllocator> = Mutex::new(LinkedListAllocato
 
 //     let memmap = memmap_request.unwrap().entries();
 
-//     crate::log_serial!("====== MEMORY MAP ======\n");
+//     crate::log!(LogLevel::Trace, "====== MEMORY MAP ======");
 //     for entry in memmap.iter() {
 //         let label = (entry.length as usize).label_bytes();
 
-//         crate::log_serial!(
-//             "[ {:#018X?} ] Type: {:?} Size: {}\n",
+//         crate::log!(
+//             LogLevel::Trace,
+//             "[ {:#018X?} ] Type: {:?} Size: {}",
 //             entry.base..entry.base + entry.length,
 //             entry.entry_type,
 //             label

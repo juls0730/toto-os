@@ -3,6 +3,8 @@
 #![no_std]
 #![no_main]
 
+use core::arch::x86_64::__cpuid;
+
 use alloc::vec::Vec;
 use limine::{request::KernelFileRequest, BaseRevision};
 use mem::{LabelBytes, HHDM_OFFSET, PHYSICAL_MEMORY_MANAGER};
@@ -167,6 +169,7 @@ fn draw_gradient() {
 }
 
 fn print_boot_info() {
+    // I dont really like this 'a'
     crate::println!("╔═╗───────────────────╔╗────╔═╗╔══╗");
     crate::println!("║╔╝╔═╗ ╔═╗╔═╗╔╦╗╔═╗╔═╗╠╣╔═╦╗║║║║══╣");
     crate::println!("║╚╗║╬╚╗║╬║║╬║║║║║═╣║═╣║║║║║║║║║╠══║");
@@ -183,7 +186,36 @@ fn print_boot_info() {
         } else {
             "release"
         }
-    )
+    );
+    if unsafe { __cpuid(0x80000000).eax } >= 0x80000004 {
+        let processor_brand = get_processor_brand();
+        crate::println!("Detected CPU: {processor_brand}");
+    }
+}
+
+fn get_processor_brand() -> alloc::string::String {
+    let mut brand_buf = [0u8; 48];
+
+    let mut offset = 0;
+    for i in 0..=2 {
+        let cpuid_result = unsafe { __cpuid(0x80000002 + i) };
+        brand_buf[offset..offset + 4].copy_from_slice(&cpuid_result.eax.to_le_bytes());
+        brand_buf[(offset + 4)..(offset + 8)].copy_from_slice(&cpuid_result.ebx.to_le_bytes());
+        brand_buf[(offset + 8)..(offset + 12)].copy_from_slice(&cpuid_result.ecx.to_le_bytes());
+        brand_buf[(offset + 12)..(offset + 16)].copy_from_slice(&cpuid_result.edx.to_le_bytes());
+        offset += 16;
+    }
+
+    // there's probably a better way to do this, but wikipedia says to not rely on the null byte, so I cant use Cstr (and I dont really want to tbh) but if it's shorter than 48bytes it will be null terminated
+    let mut brand = alloc::string::String::new();
+    for char in brand_buf {
+        if char == 0 {
+            break;
+        }
+        brand.push(char as char);
+    }
+
+    brand
 }
 
 #[macro_export]
@@ -212,7 +244,13 @@ enum LogLevel {
 #[macro_export]
 macro_rules! log {
     ($level:expr, $($arg:tt)*) => {{
-        if ($level as u8) >= $crate::LOG_LEVEL {
+        let kernel_log_level = if let Ok(kernel_features) = $crate::KERNEL_FEATURES.get() {
+            kernel_features.log_level
+        } else {
+            $crate::LOG_LEVEL
+        };
+
+        if ($level as u8) >= kernel_log_level {
             let color_code = match $level {
                 $crate::LogLevel::Trace => "\x1B[90m",
                 $crate::LogLevel::Debug =>  "\x1B[94m",
@@ -228,6 +266,7 @@ macro_rules! log {
 
 #[derive(Debug)]
 pub struct KernelFeatures {
+    pub log_level: u8,
     pub fat_in_mem: bool,
 }
 
@@ -235,6 +274,7 @@ impl KernelFeatures {
     fn update_option(&mut self, option: &str, value: &str) {
         #[allow(clippy::single_match)]
         match option {
+            "log_level" => self.log_level = value.parse().unwrap_or(crate::LOG_LEVEL),
             "fat_in_mem" => self.fat_in_mem = value == "true",
             _ => {}
         }
@@ -245,7 +285,10 @@ impl KernelFeatures {
 pub static KERNEL_FEATURES: libs::cell::OnceCell<KernelFeatures> = libs::cell::OnceCell::new();
 
 fn parse_kernel_cmdline() {
-    let mut kernel_features: KernelFeatures = KernelFeatures { fat_in_mem: true };
+    let mut kernel_features: KernelFeatures = KernelFeatures {
+        fat_in_mem: true,
+        log_level: crate::LOG_LEVEL,
+    };
 
     let kernel_file_response = KERNEL_REQUEST.get_response();
     if kernel_file_response.is_none() {

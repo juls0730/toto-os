@@ -1,9 +1,7 @@
 use core::cell::UnsafeCell;
 
-mod lazy;
 mod once;
 
-pub use lazy::LazyCell;
 pub use once::OnceCell;
 
 pub struct Cell<T: ?Sized> {

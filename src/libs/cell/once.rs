@@ -39,17 +39,24 @@ impl<T> OnceCell<T> {
         match self.state.get() {
             OnceCellState::Uninitialized => {
                 self.set(func());
-                self.get()
+                self.get_unchecked()
             }
             OnceCellState::Initializing => panic!("Tried to get or set data that is initializing"),
             OnceCellState::Initialized(data) => data,
         }
     }
 
-    fn get(&self) -> &T {
+    fn get_unchecked(&self) -> &T {
         match self.state.get() {
             OnceCellState::Initialized(data) => data,
             _ => panic!("Attempted to access uninitialized data!"),
+        }
+    }
+
+    pub fn get(&self) -> Result<&T, ()> {
+        match self.state.get() {
+            OnceCellState::Initialized(data) => return Ok(data),
+            _ => return Err(()),
         }
     }
 }
@@ -58,6 +65,6 @@ impl<T> Deref for OnceCell<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.get()
+        self.get_unchecked()
     }
 }
