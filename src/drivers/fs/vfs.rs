@@ -223,12 +223,14 @@ impl File {
         unsafe { self.descriptor.as_mut() }
     }
 
-    pub fn read(&mut self, mut count: usize, offset: usize, f: u32) -> Result<Arc<[u8]>, ()> {
-        if count == 0 {
-            count = self.len() - offset;
-        }
-
+    pub fn read(&mut self, count: usize, offset: usize, f: u32) -> Result<Arc<[u8]>, ()> {
         return self.get_node().read(count, offset, f);
+    }
+
+    pub fn read_all(&mut self, offset: usize, f: u32) -> Result<Arc<[u8]>, ()> {
+        let count = self.len() - offset;
+
+        return self.read(count, offset, f);
     }
 
     pub fn write(&mut self, offset: usize, buf: &[u8], f: u32) {
@@ -278,6 +280,18 @@ impl TreeNode {
 
     pub fn lookup(&mut self, name: &str) -> Result<&mut Self, ()> {
         let parent = Some(self.as_ptr());
+
+        if name == ".." {
+            if let Some(mut parent_node) = self.parent {
+                return Ok(unsafe { parent_node.as_mut() });
+            } else {
+                return Err(());
+            }
+        }
+
+        if name == "." {
+            return Ok(self);
+        }
 
         if !self.children.contains_key(name) {
             let vnode: VNode;

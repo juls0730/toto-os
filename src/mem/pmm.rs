@@ -2,165 +2,33 @@
 
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
-use super::{HHDM_OFFSET, HHDM_REQUEST, MEMMAP_REQUEST};
+use crate::{
+    libs::limine::{get_hhdm_offset, get_memmap},
+    LogLevel,
+};
 
-pub const PAGE_SIZE: usize = 4096;
+use super::{PhysicalPtr, VirtualPtr, PAGE_SIZE};
 
 #[derive(Debug)]
-pub struct PhysicalMemoryManager {
-    bitmap: AtomicPtr<u8>,
-    highest_page_idx: AtomicUsize,
-    last_used_page_idx: AtomicUsize,
-    usable_pages: AtomicUsize,
-    used_pages: AtomicUsize,
+struct PhysicalMemoryManager {
+    pub bitmap: AtomicPtr<u8>,
+    pub highest_page_idx: AtomicUsize,
+    pub last_used_page_idx: AtomicUsize,
+    pub usable_pages: AtomicUsize,
+    pub used_pages: AtomicUsize,
 }
 
-pub fn pmm_init() {
-    super::PHYSICAL_MEMORY_MANAGER.set(PhysicalMemoryManager::new());
-}
+static mut PHYSICAL_MEMORY_MANAGER: PhysicalMemoryManager = PhysicalMemoryManager::new();
 
 impl PhysicalMemoryManager {
-    pub fn new() -> Self {
-        let pmm = Self {
+    const fn new() -> Self {
+        return Self {
             bitmap: AtomicPtr::new(core::ptr::null_mut()),
             highest_page_idx: AtomicUsize::new(0),
             last_used_page_idx: AtomicUsize::new(0),
             usable_pages: AtomicUsize::new(0),
             used_pages: AtomicUsize::new(0),
         };
-
-        let hhdm_req = HHDM_REQUEST
-            .get_response()
-            .expect("Failed to get Higher Half Direct Map!");
-
-        let hhdm_offset = hhdm_req.offset() as usize;
-
-        HHDM_OFFSET.set(hhdm_offset);
-
-        let memmap = unsafe {
-            MEMMAP_REQUEST
-                .get_response_mut()
-                .expect("Failed to get Memory map!")
-                .entries_mut()
-        };
-
-        let mut highest_addr: usize = 0;
-
-        for entry in memmap.iter() {
-            if entry.entry_type == limine::memory_map::EntryType::USABLE {
-                pmm.usable_pages
-                    .fetch_add(entry.length as usize / PAGE_SIZE, Ordering::SeqCst);
-                if highest_addr < (entry.base + entry.length) as usize {
-                    highest_addr = (entry.base + entry.length) as usize;
-                }
-            }
-        }
-
-        pmm.highest_page_idx
-            .store(highest_addr / PAGE_SIZE, Ordering::SeqCst);
-        let bitmap_size =
-            ((pmm.highest_page_idx.load(Ordering::SeqCst) / 8) + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-
-        for entry in memmap.iter_mut() {
-            if entry.entry_type != limine::memory_map::EntryType::USABLE {
-                continue;
-            }
-
-            if entry.length as usize >= bitmap_size {
-                let ptr = (entry.base as usize + hhdm_offset) as *mut u8;
-                pmm.bitmap.store(ptr, Ordering::SeqCst);
-
-                unsafe {
-                    // Set the bit map to non-free
-                    core::ptr::write_bytes(ptr, 0xFF, bitmap_size);
-                };
-
-                entry.length -= bitmap_size as u64;
-                entry.base += bitmap_size as u64;
-
-                break;
-            }
-        }
-
-        for entry in memmap.iter() {
-            if entry.entry_type != limine::memory_map::EntryType::USABLE {
-                continue;
-            }
-
-            for i in 0..(entry.length as usize / PAGE_SIZE) {
-                pmm.bitmap_reset((entry.base as usize + (i * PAGE_SIZE)) / PAGE_SIZE);
-            }
-        }
-
-        return pmm;
-    }
-
-    fn inner_alloc(&self, pages: usize, limit: usize) -> *mut u8 {
-        let mut p: usize = 0;
-
-        while self.last_used_page_idx.load(Ordering::SeqCst) < limit {
-            if self.bitmap_test(self.last_used_page_idx.fetch_add(1, Ordering::SeqCst)) {
-                p = 0;
-                continue;
-            }
-
-            p += 1;
-            if p == pages {
-                let page = self.last_used_page_idx.load(Ordering::SeqCst) - pages;
-                for i in page..self.last_used_page_idx.load(Ordering::SeqCst) {
-                    self.bitmap_set(i);
-                }
-                return (page * PAGE_SIZE) as *mut u8;
-            }
-        }
-
-        // We have hit the search limit, but did not find any suitable memory regions starting from last_used_page_idx
-        return core::ptr::null_mut();
-    }
-
-    pub fn alloc_nozero(&self, pages: usize) -> *mut u8 {
-        // Attempt to allocate n pages with a search limit of the amount of usable pages
-        let mut page_addr = self.inner_alloc(pages, self.highest_page_idx.load(Ordering::SeqCst));
-
-        if page_addr.is_null() {
-            // If page_addr is null, then attempt to allocate n pages, but starting from
-            // The beginning of the bitmap and with a limit of the old last_used_page_idx
-            let last = self.last_used_page_idx.swap(0, Ordering::SeqCst);
-            page_addr = self.inner_alloc(pages, last);
-
-            // If page_addr is still null, we have ran out of usable memory
-            if page_addr.is_null() {
-                return core::ptr::null_mut();
-            }
-        }
-
-        self.used_pages.fetch_add(pages, Ordering::SeqCst);
-
-        return page_addr;
-    }
-
-    pub fn alloc(&self, pages: usize) -> *mut u8 {
-        let ret = self.alloc_nozero(pages);
-
-        if ret.is_null() {
-            return ret;
-        }
-
-        unsafe {
-            core::ptr::write_bytes(ret.add(*HHDM_OFFSET), 0x00, pages * PAGE_SIZE);
-        };
-
-        return ret;
-    }
-
-    pub fn dealloc(&self, addr: *mut u8, pages: usize) {
-        let page = addr as usize / PAGE_SIZE;
-
-        for i in page..(page + pages) {
-            self.bitmap_reset(i);
-        }
-
-        self.used_pages.fetch_sub(pages, Ordering::SeqCst);
     }
 
     #[inline(always)]
@@ -189,17 +57,154 @@ impl PhysicalMemoryManager {
             (*self.bitmap.load(Ordering::SeqCst).add(byte_index)) &= !(1 << bit_index);
         }
     }
+}
 
-    pub fn total_memory(&self) -> usize {
-        return self.usable_pages.load(Ordering::SeqCst) * 4096;
+pub fn pmm_init() {
+    // we borrow the pointer because it is discouraged to make mutable reference to a mutable static and in Rust 2024 that will be a hard error
+    let pmm = unsafe { &mut *core::ptr::addr_of_mut!(PHYSICAL_MEMORY_MANAGER) };
+
+    let memmap = get_memmap();
+
+    let mut highest_addr: usize = 0;
+
+    for entry in memmap.iter() {
+        if entry.entry_type == limine::memory_map::EntryType::USABLE {
+            pmm.usable_pages
+                .fetch_add(entry.length as usize / PAGE_SIZE, Ordering::SeqCst);
+            if highest_addr < (entry.base + entry.length) as usize {
+                highest_addr = (entry.base + entry.length) as usize;
+            }
+        }
     }
 
-    pub fn usable_memory(&self) -> usize {
-        return (self.usable_pages.load(Ordering::SeqCst) * 4096)
-            - (self.used_pages.load(Ordering::SeqCst) * 4096);
+    pmm.highest_page_idx
+        .store(highest_addr / PAGE_SIZE, Ordering::SeqCst);
+    let bitmap_size =
+        ((pmm.highest_page_idx.load(Ordering::SeqCst) / 8) + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+
+    for entry in memmap.iter_mut() {
+        if entry.entry_type != limine::memory_map::EntryType::USABLE {
+            continue;
+        }
+
+        if entry.length as usize >= bitmap_size {
+            let ptr = VirtualPtr::from(entry.base as usize + get_hhdm_offset());
+            pmm.bitmap.store(ptr.as_raw_ptr(), Ordering::SeqCst);
+
+            unsafe {
+                // Set the bit map to non-free
+                ptr.write_bytes(0xFF, bitmap_size);
+            };
+
+            entry.length -= bitmap_size as u64;
+            entry.base += bitmap_size as u64;
+
+            break;
+        }
     }
 
-    pub fn used_memory(&self) -> usize {
-        return self.used_pages.load(Ordering::SeqCst) * 4096;
+    for entry in memmap.iter() {
+        if entry.entry_type != limine::memory_map::EntryType::USABLE {
+            continue;
+        }
+
+        for i in 0..(entry.length as usize / PAGE_SIZE) {
+            pmm.bitmap_reset((entry.base as usize + (i * PAGE_SIZE)) / PAGE_SIZE);
+        }
     }
+}
+
+fn get_pmm<'a>() -> &'a mut PhysicalMemoryManager {
+    return unsafe { &mut *core::ptr::addr_of_mut!(PHYSICAL_MEMORY_MANAGER) };
+}
+
+fn pmm_inner_alloc(pages: usize, limit: usize) -> PhysicalPtr<u8> {
+    let pmm = get_pmm();
+    let mut p: usize = 0;
+
+    while pmm.last_used_page_idx.load(Ordering::SeqCst) < limit {
+        if pmm.bitmap_test(pmm.last_used_page_idx.fetch_add(1, Ordering::SeqCst)) {
+            p = 0;
+            continue;
+        }
+
+        p += 1;
+        if p == pages {
+            let page = pmm.last_used_page_idx.load(Ordering::SeqCst) - pages;
+            for i in page..pmm.last_used_page_idx.load(Ordering::SeqCst) {
+                pmm.bitmap_set(i);
+            }
+            return PhysicalPtr::from(page * PAGE_SIZE);
+        }
+    }
+
+    // We have hit the search limit, but did not find any suitable memory regions starting from last_used_page_idx
+    crate::log!(LogLevel::Fatal, "Out Of Memory!");
+    return PhysicalPtr::null_mut();
+}
+
+pub fn pmm_alloc_nozero(pages: usize) -> PhysicalPtr<u8> {
+    let pmm = get_pmm();
+
+    // Attempt to allocate n pages with a search limit of the amount of usable pages
+    let mut page_addr = pmm_inner_alloc(pages, pmm.highest_page_idx.load(Ordering::SeqCst));
+
+    if page_addr.is_null() {
+        // If page_addr is null, then attempt to allocate n pages, but starting from
+        // The beginning of the bitmap and with a limit of the old last_used_page_idx
+        let last = pmm.last_used_page_idx.swap(0, Ordering::SeqCst);
+        page_addr = pmm_inner_alloc(pages, last);
+
+        // If page_addr is still null, we have ran out of usable memory
+        if page_addr.is_null() {
+            return PhysicalPtr::null_mut();
+        }
+    }
+
+    pmm.used_pages.fetch_add(pages, Ordering::SeqCst);
+
+    return page_addr;
+}
+
+pub fn pmm_alloc(pages: usize) -> PhysicalPtr<u8> {
+    let ret = pmm_alloc_nozero(pages);
+
+    if ret.is_null() {
+        return ret;
+    }
+
+    unsafe {
+        ret.to_higher_half().write_bytes(0x00, pages * PAGE_SIZE);
+    };
+
+    return ret;
+}
+
+pub fn pmm_dealloc(ptr: PhysicalPtr<u8>, pages: usize) {
+    let pmm = get_pmm();
+    let page = ptr.addr() as usize / PAGE_SIZE;
+
+    for i in page..(page + pages) {
+        pmm.bitmap_reset(i);
+    }
+
+    pmm.used_pages.fetch_sub(pages, Ordering::SeqCst);
+}
+
+pub fn total_memory() -> usize {
+    let pmm = get_pmm();
+    return pmm.usable_pages.load(Ordering::SeqCst) * 4096;
+}
+
+pub fn usable_memory() -> usize {
+    let pmm = get_pmm();
+
+    return (pmm.usable_pages.load(Ordering::SeqCst) * 4096)
+        - (pmm.used_pages.load(Ordering::SeqCst) * 4096);
+}
+
+pub fn used_memory() -> usize {
+    let pmm = get_pmm();
+
+    return pmm.used_pages.load(Ordering::SeqCst) * 4096;
 }

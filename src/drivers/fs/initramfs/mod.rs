@@ -4,38 +4,11 @@ mod superblock;
 use core::{fmt::Debug, mem::MaybeUninit, ptr::NonNull};
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
-use limine::request::ModuleRequest;
 
 use super::vfs::{FsOps, VNode, VNodeOperations, VNodeType};
 
-#[used]
-#[link_section = ".requests"]
-pub static MODULE_REQUEST: ModuleRequest = ModuleRequest::new();
-
 pub fn init() -> Squashfs<'static> {
-    // TODO: Put the module request stuff in another file?
-    if MODULE_REQUEST.get_response().is_none() {
-        panic!("Module request in none!");
-    }
-    let module_response = MODULE_REQUEST.get_response().unwrap();
-
-    let mut initramfs = None;
-
-    let module_name = "initramfs.img";
-
-    for module in module_response.modules() {
-        let path = core::str::from_utf8(module.path());
-        if path.is_err() {
-            continue;
-        }
-
-        if !path.unwrap().contains(module_name) {
-            continue;
-        }
-
-        initramfs = Some(module);
-    }
-    // End TODO
+    let initramfs = crate::libs::limine::get_module("initramfs.img");
 
     if initramfs.is_none() {
         panic!("Initramfs was not found!");
@@ -501,7 +474,7 @@ impl VNodeOperations for Inode {
                     file.block_offset as usize
                 } + offset;
 
-                block_data.extend(&data_table[block_offset..(block_offset + count as usize)]);
+                block_data.extend(&data_table[block_offset..(block_offset + count)]);
 
                 return Ok(Arc::from(block_data));
             },

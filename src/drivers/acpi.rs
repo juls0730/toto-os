@@ -1,19 +1,14 @@
 use core::ops::Add;
 
 use alloc::vec::Vec;
-use limine::request::RsdpRequest;
-use limine::request::SmpRequest;
 
+use crate::libs::limine::get_hhdm_offset;
+use crate::mem::{PhysicalPtr, VirtualPtr};
 use crate::LogLevel;
 use crate::{
     arch::io::{inw, outb},
     libs::cell::OnceCell,
-    mem::HHDM_OFFSET,
 };
-
-#[used]
-#[link_section = ".requests"]
-pub static mut SMP_REQUEST: SmpRequest = SmpRequest::new();
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
@@ -38,13 +33,19 @@ pub struct SDT<'a, T> {
 }
 
 impl<'a, T> SDT<'a, T> {
-    unsafe fn new(mut ptr: *const u8) -> Self {
-        if (ptr as usize) < *HHDM_OFFSET {
-            ptr = ptr.add(*HHDM_OFFSET);
-        }
+    unsafe fn new(ptr: PhysicalPtr<u8>) -> Self {
+        // let hhdm_offset = get_hhdm_offset();
 
-        let length = core::ptr::read_unaligned(ptr.add(4).cast::<u32>());
-        let data = core::slice::from_raw_parts(ptr, length as usize);
+        // if (ptr as usize) < hhdm_offset {
+        //     ptr = ptr.add(hhdm_offset);
+        // }
+
+        let ptr = ptr.to_higher_half();
+
+        // let length = core::ptr::read_unaligned(ptr.add(4).cast::<u32>());
+        // let data = core::slice::from_raw_parts(ptr, length as usize);
+        let length = ptr.add(4).cast::<u32>().read_unaligned();
+        let data = core::slice::from_raw_parts(ptr.as_raw_ptr(), length as usize);
 
         crate::log!(LogLevel::Trace, "SDT at: {ptr:p}");
 
@@ -124,25 +125,27 @@ impl<'a> RootSDT<'a> {
         return (self.header().length as usize - core::mem::size_of::<SDTHeader>()) / ptr_size;
     }
 
-    unsafe fn get(&self, idx: usize) -> *const u8 {
+    unsafe fn get(&self, idx: usize) -> VirtualPtr<u8> {
         let mut offset = 0;
 
         let root_ptr = match self {
             RootSDT::RSDT(rsdt) => {
-                let ptrs = (rsdt.inner.pointers as usize).add(*HHDM_OFFSET) as *const u8;
+                let ptrs: VirtualPtr<u8> =
+                    VirtualPtr::from((rsdt.inner.pointers as usize).add(get_hhdm_offset()));
                 assert!(!ptrs.is_null());
                 ptrs.add(offset)
             }
             RootSDT::XSDT(xsdt) => {
-                let ptrs = (xsdt.inner.pointers as usize).add(*HHDM_OFFSET) as *const u8;
+                let ptrs: VirtualPtr<u8> =
+                    VirtualPtr::from((xsdt.inner.pointers as usize).add(get_hhdm_offset()));
                 assert!(!ptrs.is_null());
                 ptrs.add(offset)
             }
         };
 
         for _ in 0..idx {
-            let header: &SDTHeader = &*root_ptr.add(offset).cast::<SDTHeader>();
-            offset += header.length as usize;
+            let header: VirtualPtr<SDTHeader> = root_ptr.add(offset).cast::<SDTHeader>();
+            offset += header.as_ref().unwrap().length as usize;
         }
 
         return root_ptr.add(offset);
@@ -157,30 +160,28 @@ struct ACPI<'a> {
 
 static ACPI: OnceCell<ACPI> = OnceCell::new();
 
-static RSDP_REQ: RsdpRequest = RsdpRequest::new();
-
 fn resolve_acpi() {
-    let rsdp_ptr = RSDP_REQ.get_response();
+    let rsdp_ptr = crate::libs::limine::get_rdsp_ptr();
     if rsdp_ptr.is_none() {
         panic!("RSDP not found!");
     }
 
-    let rsdp = unsafe { &*rsdp_ptr.unwrap().address().cast::<RSDP>() };
+    let rsdp = unsafe { &*rsdp_ptr.unwrap().cast::<RSDP>() };
 
     // TODO: validate RSDT
     let root_sdt = {
         if rsdp.revision == 0 {
-            RootSDT::RSDT(unsafe { SDT::new(rsdp.rsdt_addr as *mut u8) })
+            RootSDT::RSDT(unsafe { SDT::new(PhysicalPtr::from(rsdp.rsdt_addr as usize)) })
         } else {
-            let xsdt = unsafe { &*rsdp_ptr.unwrap().address().cast::<XSDP>() };
-            RootSDT::XSDT(unsafe { SDT::new(xsdt.xsdt_addr as *mut u8) })
+            let xsdt = unsafe { &*rsdp_ptr.unwrap().cast::<XSDP>() };
+            RootSDT::XSDT(unsafe { SDT::new(PhysicalPtr::from(xsdt.xsdt_addr as usize)) })
         }
     };
 
     let tables: Vec<[u8; 4]> = (0..root_sdt.len())
         .map(|i| {
             let sdt_ptr = unsafe { root_sdt.get(i) };
-            let signature = unsafe { core::slice::from_raw_parts(sdt_ptr, 4) };
+            let signature = unsafe { core::slice::from_raw_parts(sdt_ptr.as_raw_ptr(), 4) };
             signature.try_into().unwrap()
         })
         .collect();
@@ -264,7 +265,6 @@ struct FADT {
     x_gpe1_block: GenericAddressStructure,
 }
 
-#[no_mangle]
 pub fn init_acpi() {
     resolve_acpi();
 
@@ -298,7 +298,7 @@ pub fn find_table<T>(table_name: &str) -> Option<SDT<T>> {
         if table == table_name.as_bytes() {
             let ptr = unsafe { ACPI.root_sdt.get(i) };
 
-            let table = unsafe { SDT::new(ptr) };
+            let table = unsafe { SDT::new(ptr.to_lower_half()) };
             return Some(table);
         }
     }

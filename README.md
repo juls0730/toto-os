@@ -1,8 +1,16 @@
 # CappuccinOS
 
-![LOC](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/juls0730/c16f26c4c5ab7f613fe758c913f9e71f/raw/cappuccinos-loc.json)
+<!--
+    Use Tokei instead of a custom loc count, tokei and my custom loc count seem to disagree by 30-100 lines but I suspect tokei to be more accurate than cloc
+    ![LOC](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/juls0730/c16f26c4c5ab7f613fe758c913f9e71f/raw/cappuccinos-loc.json)
+-->
 
-CappuccinOS is a small x86-64 operating system written from scratch in rust. This README will guide you through the process of building and running CappuccinOS.
+[![](https://tokei.rs/b1/github/juls0730/CappuccinOS?category=code&type=Rust)](https://github.com/juls0730/CappuccinOS).
+
+CappuccinOS is a small _next generation_ x86-64 operating system written from scratch in Rust. This README will guide you through the process of building and running CappuccinOS.
+
+> [!WARNING]
+> This project is in early development. Things will change.
 
 ## Features
 
@@ -79,7 +87,7 @@ Install the dependencies:
 
 <details>
     <summary>Ubuntu</summary>
-    Python should be installed by default, and if it's not, make an issue or a PR and I'll fix it
+    # Python should be installed by default, and if it's not, make an issue or a PR and I'll fix it
 
     sudo apt install gdisk dosfstools squashfs-tools
     # Optionally

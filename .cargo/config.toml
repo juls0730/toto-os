@@ -8,3 +8,9 @@ build-std = [
 [build]
 target = "./src/arch/x86_64/x86_64-unknown-none.json"
 rustflags = ["-Cforce-frame-pointers=yes"]
+
+# use this to reduce the binary size, I've seen these reduce the kernel by 60Kib
+# you could use opt-level = "z" and save another 50k, but imo, speed is much more valuable than size 
+[profile.release]
+strip = true
+lto = true

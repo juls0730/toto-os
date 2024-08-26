@@ -1,4 +1,4 @@
-use crate::{drivers::acpi::SMP_REQUEST, hcf, libs::cell::OnceCell, mem::HHDM_OFFSET, LogLevel};
+use crate::{hcf, libs::cell::OnceCell, mem::VirtualPtr, LogLevel};
 
 use alloc::{sync::Arc, vec::Vec};
 
@@ -46,7 +46,7 @@ pub struct LAPIC {
 pub struct IOAPIC {
     pub ioapic_id: u8,
     _reserved: u8,
-    pub ptr: *mut u8,
+    pub ptr: VirtualPtr<u8>,
     pub global_interrupt_base: u32,
 }
 
@@ -62,11 +62,11 @@ pub struct IOAPICSourceOverride {
 #[derive(Debug)]
 pub struct APIC {
     pub io_apic: IOAPIC,
-    local_apic: *mut u8,
+    local_apic: VirtualPtr<u8>,
     pub cpus: Arc<[LAPIC]>,
 }
 
-unsafe extern "C" fn test<'a>(cpu: &'a limine::smp::Cpu) -> ! {
+unsafe extern "C" fn test(cpu: &limine::smp::Cpu) -> ! {
     crate::log!(LogLevel::Debug, "hey from CPU {:<02}", cpu.id);
 
     hcf();
@@ -100,51 +100,56 @@ impl APIC {
             core::ptr::addr_of!(madt)
         );
 
-        let mut lapic_ptr = (madt.inner.local_apic_address as usize + *HHDM_OFFSET) as *mut u8;
+        let hhdm_offset = crate::libs::limine::get_hhdm_offset();
+
+        let mut lapic_ptr: VirtualPtr<u8> =
+            VirtualPtr::from(madt.inner.local_apic_address as usize + hhdm_offset);
         let mut io_apic = None;
         let mut io_apic_source_override = None;
 
-        let mut ptr = madt.extra.unwrap().as_ptr();
-        let ptr_end = unsafe { ptr.add(madt.header.length as usize - 44) };
+        // constant pointers are a lie anyways
+        let mut ptr: VirtualPtr<u8> = VirtualPtr::from(madt.extra.unwrap().as_ptr());
+        let ptr_end: VirtualPtr<u8> = unsafe { ptr.add(madt.header.length as usize - 44) };
 
-        while (ptr as usize) < (ptr_end as usize) {
+        while (ptr.addr()) < (ptr_end.addr()) {
             // ptr may or may bot be aligned, although I have had crashes related to this pointer being not aligned
             // and tbh I dont really care about the performance impact of reading unaligned pointers right now
             // TODO
-            match unsafe { core::ptr::read_unaligned(ptr) } {
+            match unsafe { ptr.read_unaligned() } {
                 0 => {
-                    if unsafe { *(ptr.add(4)) } & 1 != 0 {
-                        cpus.push(unsafe { core::ptr::read_unaligned(ptr.add(2).cast::<LAPIC>()) });
+                    if unsafe { ptr.add(4).read() } & 1 != 0 {
+                        cpus.push(unsafe { ptr.add(2).cast::<LAPIC>().read_unaligned() });
                     }
                 }
                 1 => unsafe {
                     io_apic = Some(IOAPIC {
-                        ioapic_id: core::ptr::read_unaligned(ptr.add(2)),
-                        _reserved: core::ptr::read_unaligned(ptr.add(3)),
-                        ptr: (core::ptr::read_unaligned(ptr.add(4).cast::<u32>()) as usize
-                            + *HHDM_OFFSET) as *mut u8,
-                        global_interrupt_base: core::ptr::read_unaligned(ptr.add(8).cast::<u32>()),
+                        ioapic_id: ptr.add(2).read_unaligned(),
+                        _reserved: ptr.add(3).read_unaligned(),
+                        ptr: VirtualPtr::from(
+                            ptr.add(4).cast::<u32>().read_unaligned() as usize + hhdm_offset,
+                        ),
+                        global_interrupt_base: ptr.add(8).cast::<u32>().read_unaligned(),
                     })
                 },
                 2 => unsafe {
                     io_apic_source_override = Some(IOAPICSourceOverride {
-                        bus_source: core::ptr::read_unaligned(ptr.add(2)),
-                        irq_source: core::ptr::read_unaligned(ptr.add(3)),
-                        global_system_interrupt: core::ptr::read_unaligned(
-                            ptr.add(4).cast::<u32>(),
-                        ),
-                        flags: core::ptr::read_unaligned(ptr.add(8).cast::<u16>()),
+                        bus_source: ptr.add(2).read_unaligned(),
+                        irq_source: ptr.add(3).read_unaligned(),
+                        global_system_interrupt: ptr.add(4).cast::<u32>().read_unaligned(),
+                        flags: ptr.add(8).cast::<u16>().read_unaligned(),
                     })
                 },
                 5 => {
-                    lapic_ptr = (unsafe { core::ptr::read_unaligned(ptr.add(4).cast::<u64>()) }
-                        as usize
-                        + *HHDM_OFFSET) as *mut u8
+                    lapic_ptr = unsafe {
+                        VirtualPtr::from(
+                            ptr.add(4).cast::<u64>().read_unaligned() as usize + hhdm_offset,
+                        )
+                    }
                 }
                 _ => {}
             }
 
-            ptr = unsafe { ptr.add(core::ptr::read_unaligned(ptr.add(1)) as usize) };
+            ptr = unsafe { ptr.add(ptr.add(1).read_unaligned() as usize) };
         }
 
         if io_apic.is_none() || io_apic_source_override.is_none() {
@@ -180,7 +185,7 @@ impl APIC {
 
         // crate::println!("{number_of_inputs}");
 
-        let smp_request = unsafe { SMP_REQUEST.get_response_mut() };
+        let smp_request = crate::libs::limine::get_smp();
 
         if smp_request.is_none() {
             panic!("Failed to get smp from limine!");
@@ -205,27 +210,32 @@ impl APIC {
 
     pub fn read_ioapic(&self, reg: u32) -> u32 {
         unsafe {
-            core::ptr::write_volatile(self.io_apic.ptr.cast::<u32>(), reg & 0xff);
-            return core::ptr::read_volatile(self.io_apic.ptr.cast::<u32>().add(4));
+            let ptr = self.io_apic.ptr;
+            ptr.cast::<u32>().as_raw_ptr().write_volatile(reg & 0xFF);
+            return ptr.cast::<u32>().add(4).read_volatile();
         }
     }
 
     pub fn write_ioapic(&self, reg: u32, value: u32) {
         unsafe {
-            core::ptr::write_volatile(self.io_apic.ptr.cast::<u32>(), reg & 0xff);
-            core::ptr::write_volatile(self.io_apic.ptr.cast::<u32>().add(4), value);
+            let ptr = self.io_apic.ptr;
+            ptr.cast::<u32>().write_volatile(reg & 0xFF);
+            ptr.cast::<u32>().add(4).write_volatile(value);
         }
     }
 
     pub fn read_lapic(&self, reg: u32) -> u32 {
         unsafe {
-            return *self.local_apic.add(reg as usize).cast::<u32>();
+            return self.local_apic.add(reg as usize).cast::<u32>().read();
         }
     }
 
     pub fn write_lapic(&self, reg: u32, value: u32) {
         unsafe {
-            core::ptr::write_volatile(self.local_apic.add(reg as usize).cast::<u32>(), value);
+            self.local_apic
+                .add(reg as usize)
+                .cast::<u32>()
+                .write_volatile(value);
         }
     }
 

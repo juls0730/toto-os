@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use super::idt_set_gate;
-use crate::{hcf, log, LogLevel};
+use crate::{hcf, log, mem::VirtualPtr, LogLevel};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -37,7 +37,7 @@ struct Registers {
 static FAULTED: AtomicU8 = AtomicU8::new(0);
 
 extern "C" fn exception_handler(registers: u64) {
-    let registers = unsafe { *(registers as *const Registers) };
+    let registers = unsafe { VirtualPtr::<Registers>::from(registers as usize).read() };
 
     match FAULTED.fetch_add(1, Ordering::SeqCst) {
         0 => {}
@@ -67,9 +67,10 @@ extern "C" fn exception_handler(registers: u64) {
         }
         0x0E => {
             log!(LogLevel::Fatal, "PAGE FAULT!");
-        }
-        0xFF => {
-            log!(LogLevel::Fatal, "EXCEPTION!");
+            log!(
+                LogLevel::Debug,
+                "HINT: Find the last pointer you touched and make sure it's in virtual memory"
+            );
         }
         _ => {
             log!(LogLevel::Fatal, "EXCEPTION!");
@@ -82,7 +83,7 @@ extern "C" fn exception_handler(registers: u64) {
 }
 
 fn print_registers(registers: &Registers) {
-    log!(LogLevel::Info, "{:-^width$}", " REGISTERS ", width = 98);
+    log!(LogLevel::Info, "{:─^width$}", " REGISTERS ", width = 98);
 
     log!(
         LogLevel::Info,

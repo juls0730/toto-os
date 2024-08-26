@@ -1,28 +1,274 @@
 pub mod allocator;
 pub mod pmm;
+pub mod vmm;
 
-use crate::{
-    libs::{cell::OnceCell, sync::Mutex},
-    // LogLevel,
-};
+use core::fmt::{write, Debug, Pointer};
 
-use self::{allocator::LinkedListAllocator, pmm::PhysicalMemoryManager};
+use crate::libs::{limine::get_hhdm_offset, sync::Mutex};
 
-#[used]
-#[link_section = ".requests"]
-static mut MEMMAP_REQUEST: limine::request::MemoryMapRequest =
-    limine::request::MemoryMapRequest::new();
+use self::allocator::LinkedListAllocator;
 
-#[used]
-#[link_section = ".requests"]
-static HHDM_REQUEST: limine::request::HhdmRequest = limine::request::HhdmRequest::new();
-pub static HHDM_OFFSET: OnceCell<usize> = OnceCell::new();
+/// A PhysicalPtr is a pointer that uses a physical location in memory. These pointers are not readable or mutable as we cannot gurantee we are viewing the correct section of memory or that this memory is mapped to that location at all, resulting in a Page Fault.
+// TODO: make this use only a usize or something instead of a ptr
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct PhysicalPtr<T> {
+    inner: *mut T,
+}
 
-pub static PHYSICAL_MEMORY_MANAGER: OnceCell<PhysicalMemoryManager> = OnceCell::new();
+impl<T> PhysicalPtr<T> {
+    pub const fn new(ptr: *mut T) -> Self {
+        return Self { inner: ptr };
+    }
 
-pub fn align_up(addr: usize, align: usize) -> usize {
-    let offset = (addr as *const u8).align_offset(align);
-    addr + offset
+    pub const fn null_mut() -> Self {
+        return Self {
+            inner: core::ptr::null_mut(),
+        };
+    }
+
+    pub fn as_raw_ptr(&self) -> *mut T {
+        return self.inner;
+    }
+
+    pub fn addr(&self) -> usize {
+        return self.inner as usize;
+    }
+
+    pub fn is_null(&self) -> bool {
+        return self.inner.is_null();
+    }
+
+    /// # Safety:
+    /// see core::ptr::mut_ptr.add()
+    pub unsafe fn add(&self, count: usize) -> Self {
+        return Self::new(self.inner.add(count));
+    }
+
+    /// # Safety:
+    /// see core::ptr::mut_ptr.sub()
+    pub unsafe fn sub(&self, count: usize) -> Self {
+        return Self::new(self.inner.sub(count));
+    }
+
+    /// # Safety:
+    /// see core::ptr::mut_ptr.offset()
+    pub unsafe fn offset(&self, count: isize) -> Self {
+        return Self::new(self.inner.offset(count));
+    }
+
+    pub const fn cast<U>(&self) -> PhysicalPtr<U> {
+        return PhysicalPtr::new(self.inner.cast::<U>());
+    }
+
+    // torn if this should be unsafe or not
+    pub fn to_higher_half(&self) -> VirtualPtr<T> {
+        return unsafe {
+            VirtualPtr::new(self.cast::<u8>().add(get_hhdm_offset()).inner.cast::<T>())
+        };
+    }
+}
+
+impl<T> From<usize> for PhysicalPtr<T> {
+    fn from(addr: usize) -> Self {
+        PhysicalPtr {
+            inner: addr as *mut T,
+        }
+    }
+}
+
+impl<T> From<*mut T> for PhysicalPtr<T> {
+    fn from(ptr: *mut T) -> Self {
+        PhysicalPtr { inner: ptr }
+    }
+}
+
+// constant pointers are a lie anyways tbh
+impl<T> From<*const T> for PhysicalPtr<T> {
+    fn from(ptr: *const T) -> Self {
+        PhysicalPtr {
+            inner: ptr as *mut T,
+        }
+    }
+}
+
+impl<T> Debug for PhysicalPtr<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write(f, format_args!("PhysicalPtr({:p})", self.inner))
+    }
+}
+
+impl<T> Pointer for PhysicalPtr<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write(f, format_args!("PhysicalPtr({:p})", self.inner))
+    }
+}
+
+/// A Virtual Pointer is a pointer that uses a virtual address. These pointers are readable and mutable as they map to a physical address through paging.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct VirtualPtr<T> {
+    inner: *mut T,
+}
+
+impl<T> VirtualPtr<T> {
+    pub const fn new(ptr: *mut T) -> Self {
+        return Self { inner: ptr };
+    }
+
+    pub const fn null_mut() -> Self {
+        return Self {
+            inner: core::ptr::null_mut(),
+        };
+    }
+
+    pub fn addr(&self) -> usize {
+        return self.inner as usize;
+    }
+
+    pub fn as_raw_ptr(&self) -> *mut T {
+        return self.inner;
+    }
+
+    pub fn is_null(&self) -> bool {
+        return self.inner.is_null();
+    }
+
+    /// # Safety:
+    /// see core::ptr::mut_ptr.add()
+    pub unsafe fn add(&self, count: usize) -> Self {
+        return Self::new(self.inner.add(count));
+    }
+
+    /// # Safety:
+    /// see core::ptr::mut_ptr.sub()
+    pub unsafe fn sub(&self, count: usize) -> Self {
+        return Self::new(self.inner.sub(count));
+    }
+
+    /// # Safety:
+    /// see core::ptr::mut_ptr.offset()
+    pub unsafe fn offset(&self, count: isize) -> Self {
+        return Self::new(self.inner.offset(count));
+    }
+
+    pub const fn cast<U>(&self) -> VirtualPtr<U> {
+        return VirtualPtr::new(self.inner.cast::<U>());
+    }
+
+    /// # Safety:
+    /// see core::ptr::mut_ptr.write_bytes()
+    pub unsafe fn write_bytes(&self, val: u8, count: usize) {
+        self.inner.write_bytes(val, count);
+    }
+
+    /// # Safety:
+    /// Ensure the pointer is in the higher half
+    pub unsafe fn to_lower_half(&self) -> PhysicalPtr<T> {
+        return unsafe {
+            // be very careful with the math here
+            PhysicalPtr::new(self.cast::<u8>().sub(get_hhdm_offset()).inner.cast::<T>())
+        };
+    }
+
+    /// # Safety:
+    /// Ensure that the pointer is a valid virtual pointer and follows the same rules as ptr::read
+    pub const unsafe fn read(&self) -> T {
+        return self.inner.read();
+    }
+
+    /// # Safety:
+    /// Ensure that the pointer is a valid virtual pointer and follows the same rules as ptr::read_unaligned
+    pub const unsafe fn read_unaligned(&self) -> T {
+        return self.inner.read_unaligned();
+    }
+
+    /// # Safety:
+    /// Ensure that the pointer is a valid virtual pointer and follows the same rules as ptr::read_unaligned
+    pub unsafe fn read_volatile(&self) -> T {
+        return self.inner.read_volatile();
+    }
+
+    /// # Safety:
+    /// Ensure that the pointer is a valid virtual pointer and follows the same rules as ptr::write
+    pub unsafe fn write(&self, val: T) {
+        self.inner.write(val);
+    }
+
+    /// # Safety:
+    /// Ensure that the pointer is a valid virtual pointer and follows the same rules as ptr::write_unaligned
+    pub unsafe fn write_unaligned(&self, val: T) {
+        self.inner.write_unaligned(val);
+    }
+
+    /// # Safety:
+    /// Ensure that the pointer is a valid virtual pointer and follows the same rules as ptr::write_volatile
+    pub unsafe fn write_volatile(&self, val: T) {
+        self.inner.write_volatile(val);
+    }
+
+    pub unsafe fn copy_to_nonoverlapping(&self, dest: VirtualPtr<T>, count: usize) {
+        self.inner.copy_to_nonoverlapping(dest.as_raw_ptr(), count)
+    }
+
+    pub unsafe fn copy_from_nonoverlapping(&self, src: VirtualPtr<T>, count: usize) {
+        self.inner.copy_from_nonoverlapping(src.as_raw_ptr(), count)
+    }
+
+    pub unsafe fn as_ref(&self) -> Option<&T> {
+        return self.inner.as_ref();
+    }
+
+    pub unsafe fn as_mut(&self) -> Option<&mut T> {
+        return self.inner.as_mut();
+    }
+}
+
+impl<T> From<usize> for VirtualPtr<T> {
+    fn from(addr: usize) -> Self {
+        VirtualPtr {
+            inner: addr as *mut T,
+        }
+    }
+}
+
+impl<T> From<*mut T> for VirtualPtr<T> {
+    fn from(ptr: *mut T) -> Self {
+        VirtualPtr { inner: ptr }
+    }
+}
+
+// constant pointers are a lie anyways tbh
+impl<T> From<*const T> for VirtualPtr<T> {
+    fn from(ptr: *const T) -> Self {
+        VirtualPtr {
+            inner: ptr as *mut T,
+        }
+    }
+}
+
+impl<T> Debug for VirtualPtr<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write(f, format_args!("VirtualPtr({:p})", self.inner))
+    }
+}
+
+impl<T> Pointer for VirtualPtr<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write(f, format_args!("VirtualPtr({:p})", self.inner))
+    }
+}
+
+pub const PAGE_SIZE: usize = 4096;
+
+pub fn align_up(val: usize, align: usize) -> usize {
+    assert!(align.is_power_of_two());
+    (val + align - 1) & !(align - 1)
+}
+
+pub fn align_down(val: usize, align: usize) -> usize {
+    assert!(align.is_power_of_two());
+    val & !(align - 1)
 }
 
 const HEAP_PAGES: usize = 1024; // 4 MiB heap
@@ -30,7 +276,7 @@ const HEAP_PAGES: usize = 1024; // 4 MiB heap
 #[global_allocator]
 pub static ALLOCATOR: Mutex<LinkedListAllocator> = Mutex::new(LinkedListAllocator::new());
 
-// TODO: Limine-rs 0.2.0 does NOT have debug implemented for a lot of it's types, so until that is fixed, either go without Type, or hack limine-rs locally
+// TODO: Limine-rs 0.2.0 does NOT have debug implemented for a lot of it's types, so until that is fixed, either go without Type, or hack limine-rs locally (tracking https://github.com/limine-bootloader/limine-rs/pull/30)
 // pub fn log_memory_map() {
 //     let memmap_request = unsafe { MEMMAP_REQUEST.get_response_mut() };
 //     if memmap_request.is_none() {
@@ -133,13 +379,13 @@ impl LabelBytes for usize {
 
 /// # Safety
 /// This will produce undefined behavior if dst is not valid for count writes
-pub unsafe fn memset32(dst: *mut u32, val: u32, count: usize) {
+pub unsafe fn memset32(dst: VirtualPtr<u32>, val: u32, count: usize) {
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     {
         let mut buf = dst;
         unsafe {
-            while buf < dst.add(count) {
-                core::ptr::write_volatile(buf, val);
+            while buf.addr() < dst.add(count).addr() {
+                buf.write_volatile(val);
                 buf = buf.offset(1);
             }
         }
@@ -148,6 +394,8 @@ pub unsafe fn memset32(dst: *mut u32, val: u32, count: usize) {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
+        let dst = dst.as_raw_ptr();
+
         core::arch::asm!(
             "rep stosd",
             inout("ecx") count => _,

@@ -24,7 +24,7 @@ pub fn inw(port: u16) -> u16 {
 ///
 /// This function panics if the supplied buffer's size is smaller than `count`.
 #[inline(always)]
-pub unsafe fn insw(port: u16, buffer: *mut u16, count: usize) {
+pub unsafe fn insw(port: u16, buffer: VirtualPtr<u16>, count: usize) {
     return;
 }
 
@@ -34,7 +34,7 @@ pub unsafe fn insw(port: u16, buffer: *mut u16, count: usize) {
 ///
 /// This function panics if the supplied buffer's size is smaller than `count`.
 #[inline(always)]
-pub unsafe fn outsb(port: u16, buffer: *const u8, count: usize) {
+pub unsafe fn outsb(port: u16, buffer: VirtualPtr<u8>, count: usize) {
     return;
 }
 
@@ -44,7 +44,7 @@ pub unsafe fn outsb(port: u16, buffer: *const u8, count: usize) {
 ///
 /// This function panics if the supplied buffer's size is smaller than `count`.
 #[inline(always)]
-pub unsafe fn outsw(port: u16, buffer: *mut u16, count: usize) {
+pub unsafe fn outsw(port: u16, buffer: VirtualPtr<u16>, count: usize) {
     return;
 }
 

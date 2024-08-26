@@ -2,6 +2,7 @@ use core::sync::atomic::AtomicBool;
 
 #[cfg(target_arch = "x86_64")]
 use crate::arch::io::{inb, outb, outsb};
+use crate::mem::VirtualPtr;
 
 // COM1
 pub static PORT: u16 = 0x3f8;
@@ -51,7 +52,7 @@ pub fn write_string(string: &str) {
     {
         while is_transmit_empty() {}
 
-        unsafe { outsb(PORT, string.as_ptr(), string.len()) }
+        unsafe { outsb(PORT, VirtualPtr::from(string.as_ptr()), string.len()) }
     }
     #[cfg(not(target_arch = "x86_64"))]
     {

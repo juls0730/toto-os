@@ -46,7 +46,7 @@ impl<T> OnceCell<T> {
         }
     }
 
-    fn get_unchecked(&self) -> &T {
+    pub fn get_unchecked(&self) -> &T {
         match self.state.get() {
             OnceCellState::Initialized(data) => data,
             _ => panic!("Attempted to access uninitialized data!"),

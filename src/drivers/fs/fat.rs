@@ -373,10 +373,8 @@ impl FatFs {
                 if filename != name {
                     continue;
                 }
-            } else {
-                if name.to_uppercase() != formatted_short_filename {
-                    continue;
-                }
+            } else if name.to_uppercase() != formatted_short_filename {
+                continue;
             }
 
             return Ok(file_entry);
@@ -599,7 +597,7 @@ impl VNodeOperations for File {
                 loop {
                     let cluster_data = unsafe { (*fat_fs).read_cluster(cluster as usize)? };
 
-                    let remaining = count as usize - copied_bytes;
+                    let remaining = count - copied_bytes;
                     let to_copy = if remaining > cluster_size {
                         cluster_size - offset
                     } else {

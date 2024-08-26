@@ -1,3 +1,4 @@
+use alloc::vec;
 use alloc::vec::Vec;
 
 #[derive(Debug)]
@@ -114,8 +115,7 @@ struct HuffRing {
 
 impl HuffRing {
     fn new() -> Self {
-        let mut data = Vec::with_capacity(32 * 1024);
-        data.resize(data.capacity(), 0);
+        let data = vec![0; 32 * 1024];
 
         return Self { pointer: 0, data };
     }
@@ -395,10 +395,10 @@ fn build_huffman(lengths: &[u8], size: usize, out: &mut Huff) {
         out.counts[i] = 0;
     }
 
-    for i in 0..size {
-        assert!(lengths[i] <= 15);
+    for &length in lengths.iter().take(size) {
+        assert!(length <= 15);
 
-        out.counts[lengths[i] as usize] += 1;
+        out.counts[length as usize] += 1;
     }
 
     out.counts[0] = 0;

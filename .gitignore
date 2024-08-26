@@ -4,9 +4,7 @@
 
 # Bochs
 bx_enh_dbg.ini
+bochsout.txt
 
 # limine
 limine/
-
-# rewrite stuff
-src.bak

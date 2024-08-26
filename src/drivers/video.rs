@@ -1,6 +1,4 @@
-use limine::{framebuffer, request::FramebufferRequest};
-
-use crate::libs::cell::OnceCell;
+use crate::{libs::cell::OnceCell, mem::VirtualPtr};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Framebuffer {
@@ -8,12 +6,18 @@ pub struct Framebuffer {
     pub height: usize,
     pub bpp: usize,
     pub pitch: usize,
-    pub pointer: *mut u8,
+    pub pointer: VirtualPtr<u8>,
 }
 
 impl Framebuffer {
     #[inline]
-    const fn new(bpp: usize, pitch: usize, ptr: *mut u8, width: usize, height: usize) -> Self {
+    const fn new(
+        bpp: usize,
+        pitch: usize,
+        ptr: VirtualPtr<u8>,
+        width: usize,
+        height: usize,
+    ) -> Self {
         return Self {
             width,
             height,
@@ -32,7 +36,7 @@ impl Framebuffer {
         let pixel_offset = (y * self.pitch as u32 + (x * (self.bpp / 8) as u32)) as isize;
 
         unsafe {
-            *(self.pointer.offset(pixel_offset).cast::<u32>()) = color;
+            self.pointer.offset(pixel_offset).cast::<u32>().write(color);
         }
     }
 
@@ -54,14 +58,14 @@ impl Framebuffer {
         unsafe {
             core::ptr::copy_nonoverlapping(
                 buffer.as_ptr(),
-                self.pointer.cast::<u32>(),
+                self.pointer.cast::<u32>().as_raw_ptr(),
                 buffer.len(),
             );
 
             if let Some(mirror_buffer) = mirror_buffer {
                 core::ptr::copy_nonoverlapping(
                     buffer.as_ptr(),
-                    mirror_buffer.pointer.cast::<u32>(),
+                    mirror_buffer.pointer.cast::<u32>().as_raw_ptr(),
                     buffer.len(),
                 );
             }
@@ -69,28 +73,18 @@ impl Framebuffer {
     }
 }
 
-#[used]
-#[link_section = ".requests"]
-pub static FRAMEBUFFER_REQUEST: FramebufferRequest = FramebufferRequest::new();
 pub static FRAMEBUFFER: OnceCell<Option<Framebuffer>> = OnceCell::new();
 
 pub fn get_framebuffer() -> Option<Framebuffer> {
     *FRAMEBUFFER.get_or_set(|| {
-        let framebuffer_response = crate::drivers::video::FRAMEBUFFER_REQUEST.get_response()?;
-        let framebuffer = framebuffer_response.framebuffers().next();
-
-        if framebuffer.is_none() {
-            return None;
-        }
-
-        let framebuffer_response = framebuffer.as_ref().unwrap();
+        let limine_frambuffer = crate::libs::limine::get_framebuffer()?;
 
         let framebuffer = Framebuffer::new(
-            framebuffer_response.bpp() as usize,
-            framebuffer_response.pitch() as usize,
-            framebuffer_response.addr(),
-            framebuffer_response.width() as usize,
-            framebuffer_response.height() as usize,
+            limine_frambuffer.bpp() as usize,
+            limine_frambuffer.pitch() as usize,
+            unsafe { VirtualPtr::new(limine_frambuffer.addr()) },
+            limine_frambuffer.width() as usize,
+            limine_frambuffer.height() as usize,
         );
 
         return Some(framebuffer);

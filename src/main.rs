@@ -6,8 +6,8 @@
 use core::arch::x86_64::__cpuid;
 
 use alloc::vec::Vec;
-use limine::{request::KernelFileRequest, BaseRevision};
-use mem::{LabelBytes, HHDM_OFFSET, PHYSICAL_MEMORY_MANAGER};
+use libs::limine::{get_hhdm_offset, get_kernel_file};
+use mem::{pmm::total_memory, LabelBytes};
 
 use crate::drivers::fs::{
     initramfs,
@@ -26,16 +26,6 @@ pub static BUILD_ID: &str = "__BUILD_ID__";
 
 pub static LOG_LEVEL: u8 = if cfg!(debug_assertions) { 1 } else { 2 };
 
-// Be sure to mark all limine requests with #[used], otherwise they may be removed by the compiler.
-#[used]
-// The .requests section allows limine to find the requests faster and more safely.
-#[link_section = ".requests"]
-static BASE_REVISION: BaseRevision = BaseRevision::new();
-
-#[used]
-#[link_section = ".requests"]
-pub static KERNEL_REQUEST: KernelFileRequest = KernelFileRequest::new();
-
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     drivers::serial::init_serial();
@@ -46,6 +36,7 @@ pub extern "C" fn _start() -> ! {
     // TODO: memory stuff
     mem::pmm::pmm_init();
     mem::init_allocator();
+    mem::vmm::vmm_init();
     drivers::acpi::init_acpi();
 
     parse_kernel_cmdline();
@@ -66,10 +57,11 @@ pub fn kmain() -> ! {
         vfs_open("/firstdir/seconddirbutlonger/yeah.txt")
             .unwrap()
             .open(0, UserCred { uid: 0, gid: 0 })
-            .read(0, 0, 0)
+            .read_all(0, 0)
     );
 
     drivers::storage::ide::init();
+
     let limine_dir = vfs_open("/mnt/boot/limine").unwrap();
 
     crate::println!(
@@ -78,7 +70,7 @@ pub fn kmain() -> ! {
             .lookup("limine.conf")
             .unwrap()
             .open(0, UserCred { uid: 0, gid: 0 })
-            .read(0, 0, 0)
+            .read_all(0, 0)
     );
 
     let root_dir = vfs_open("/").unwrap();
@@ -95,7 +87,7 @@ pub fn kmain() -> ! {
             .lookup("limine.conf")
             .unwrap()
             .open(0, UserCred { uid: 0, gid: 0 })
-            .read(0, 10, 0)
+            .read_all(10, 0)
     );
 
     let _ = drivers::fs::vfs::del_vfs("/mnt");
@@ -108,7 +100,7 @@ pub fn kmain() -> ! {
             .lookup("limine.conf")
             .unwrap()
             .open(0, UserCred { uid: 0, gid: 0 })
-            .read(0, 0, 0)
+            .read_all(0, 0)
     );
 
     // let file = vfs_open("/example.txt").unwrap();
@@ -140,16 +132,18 @@ pub fn kmain() -> ! {
 fn draw_gradient() {
     let fb = drivers::video::get_framebuffer().unwrap();
     let length = (fb.height * fb.width) * (fb.bpp / 8);
-    let pages = length / crate::mem::pmm::PAGE_SIZE;
+    let pages = length / crate::mem::PAGE_SIZE;
 
-    let buffer_ptr =
-        (crate::mem::PHYSICAL_MEMORY_MANAGER.alloc(pages) as usize + *HHDM_OFFSET) as *mut u8;
+    let hhdm_offset = get_hhdm_offset();
+
+    let buffer_ptr = crate::mem::pmm::pmm_alloc(pages).to_higher_half();
 
     if buffer_ptr.is_null() {
         panic!("Failed to allocate screen buffer")
     }
 
-    let buffer = unsafe { core::slice::from_raw_parts_mut(buffer_ptr.cast::<u32>(), length) };
+    let buffer =
+        unsafe { core::slice::from_raw_parts_mut(buffer_ptr.cast::<u32>().as_raw_ptr(), length) };
 
     for y in 0..fb.height {
         for x in 0..fb.width {
@@ -164,8 +158,7 @@ fn draw_gradient() {
 
     fb.blit_screen(buffer, None);
 
-    crate::mem::PHYSICAL_MEMORY_MANAGER
-        .dealloc((buffer_ptr as usize - *HHDM_OFFSET) as *mut u8, pages);
+    crate::mem::pmm::pmm_dealloc(unsafe { buffer_ptr.to_lower_half() }, pages);
 }
 
 fn print_boot_info() {
@@ -175,10 +168,7 @@ fn print_boot_info() {
     crate::println!("║╚╗║╬╚╗║╬║║╬║║║║║═╣║═╣║║║║║║║║║╠══║");
     crate::println!("╚═╝╚══╝║╔╝║╔╝╚═╝╚═╝╚═╝╚╝╚╩═╝╚═╝╚══╝");
     crate::println!("───────╚╝─╚╝ ©juls0730 {BUILD_ID}");
-    crate::println!(
-        "{} of memory available",
-        PHYSICAL_MEMORY_MANAGER.total_memory().label_bytes()
-    );
+    crate::println!("{} of memory available", total_memory().label_bytes());
     crate::println!(
         "The kernel was built in {} mode",
         if cfg!(debug_assertions) {
@@ -187,13 +177,16 @@ fn print_boot_info() {
             "release"
         }
     );
-    if unsafe { __cpuid(0x80000000).eax } >= 0x80000004 {
-        let processor_brand = get_processor_brand();
+    if let Some(processor_brand) = get_processor_brand() {
         crate::println!("Detected CPU: {processor_brand}");
     }
 }
 
-fn get_processor_brand() -> alloc::string::String {
+fn get_processor_brand() -> Option<alloc::string::String> {
+    if unsafe { __cpuid(0x80000000).eax } >= 0x80000004 {
+        return None;
+    }
+
     let mut brand_buf = [0u8; 48];
 
     let mut offset = 0;
@@ -215,7 +208,7 @@ fn get_processor_brand() -> alloc::string::String {
         brand.push(char as char);
     }
 
-    brand
+    return Some(brand);
 }
 
 #[macro_export]
@@ -290,7 +283,7 @@ fn parse_kernel_cmdline() {
         log_level: crate::LOG_LEVEL,
     };
 
-    let kernel_file_response = KERNEL_REQUEST.get_response();
+    let kernel_file_response = get_kernel_file();
     if kernel_file_response.is_none() {
         KERNEL_FEATURES.set(kernel_features);
         return;

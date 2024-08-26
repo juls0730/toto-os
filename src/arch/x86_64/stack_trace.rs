@@ -3,7 +3,7 @@ use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use crate::{
     drivers::fs::vfs::{vfs_open, UserCred},
     log,
-    mem::HHDM_OFFSET,
+    mem::VirtualPtr,
     LogLevel,
 };
 
@@ -12,15 +12,15 @@ use crate::{
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct StackFrame {
-    back: *const StackFrame,
+    back: usize,
     rip: usize,
 }
 
 pub fn print_stack_trace(max_frames: usize, rbp: u64) {
-    let mut stackframe = rbp as *const StackFrame;
+    let mut stackframe: VirtualPtr<StackFrame> = VirtualPtr::from(rbp as usize);
     let mut frames_processed = 0;
 
-    log!(LogLevel::Info, "{:-^width$}", " Stack Trace ", width = 98);
+    log!(LogLevel::Info, "{:─^width$}", " Stack Trace ", width = 98);
     for _ in 0..max_frames {
         frames_processed += 1;
 
@@ -28,12 +28,10 @@ pub fn print_stack_trace(max_frames: usize, rbp: u64) {
             break;
         }
 
-        let instruction_ptr = unsafe { (*stackframe).rip };
+        let instruction_ptr = unsafe { (stackframe.read()).rip };
 
-        if instruction_ptr < *HHDM_OFFSET {
-            unsafe {
-                stackframe = (*stackframe).back;
-            };
+        if instruction_ptr < crate::libs::limine::get_hhdm_offset() {
+            stackframe = unsafe { VirtualPtr::from((stackframe.read()).back) };
             continue;
         }
 
@@ -47,9 +45,7 @@ pub fn print_stack_trace(max_frames: usize, rbp: u64) {
 
         log!(LogLevel::Info, "{:#X} {address_info}", instruction_ptr);
 
-        unsafe {
-            stackframe = (*stackframe).back;
-        };
+        stackframe = unsafe { VirtualPtr::from((stackframe.read()).back) };
     }
 
     if frames_processed == max_frames && !stackframe.is_null() {
@@ -63,7 +59,7 @@ fn get_function_name(function_address: u64) -> Result<(String, u64), ()> {
 
     let symbols_table_bytes = symbols_fd
         .open(0, UserCred { uid: 0, gid: 0 })
-        .read(0, 0, 0)?;
+        .read_all(0, 0)?;
     let symbols_table = core::str::from_utf8(&symbols_table_bytes).ok().ok_or(())?;
 
     let mut previous_symbol: Option<(&str, u64)> = None;

@@ -1,7 +1,9 @@
 use core::mem::size_of;
 
+use alloc::vec;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
+use crate::mem::VirtualPtr;
 use crate::{
     arch::io::{inb, insw, inw, outb, outsw},
     drivers::{
@@ -297,8 +299,7 @@ impl ATABus {
         sector: u64,
         sector_count: usize,
     ) -> Result<Arc<[u8]>, ()> {
-        let mut buffer: Vec<u8> = Vec::with_capacity(ATA_SECTOR_SIZE * sector_count);
-        buffer.resize(buffer.capacity(), 0);
+        let mut buffer: Vec<u8> = vec![0; ATA_SECTOR_SIZE * sector_count];
 
         self.ide_access(
             drive,
@@ -434,14 +435,14 @@ impl ATABus {
                 ATADriveDirection::Read => unsafe {
                     insw(
                         self.io_bar + ATADriveDataRegister::Data as u16,
-                        (buffer.as_mut_ptr().cast::<u16>()).add(buffer_offset),
+                        VirtualPtr::from((buffer.as_mut_ptr().cast::<u16>()).add(buffer_offset)),
                         ATA_SECTOR_SIZE / size_of::<u16>(),
                     );
                 },
                 ATADriveDirection::Write => unsafe {
                     outsw(
                         self.io_bar + ATADriveDataRegister::Data as u16,
-                        (buffer.as_mut_ptr().cast::<u16>()).add(buffer_offset),
+                        VirtualPtr::from((buffer.as_mut_ptr().cast::<u16>()).add(buffer_offset)),
                         ATA_SECTOR_SIZE / size_of::<u16>(),
                     )
                 },
@@ -507,8 +508,8 @@ impl ATADrive {
         return unsafe { *(sectors.cast::<u32>()) } as u64;
     }
 
-    pub fn as_ptr(&self) -> *const ATADrive {
-        return core::ptr::addr_of!(*self);
+    pub fn as_ptr(&self) -> VirtualPtr<ATADrive> {
+        return unsafe { VirtualPtr::new(core::ptr::addr_of!(*self) as *mut ATADrive) };
     }
 }
 
@@ -673,7 +674,7 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
                     attributes,
                     partition_name,
                 },
-                drive.as_ptr(),
+                drive.as_ptr().as_raw_ptr(),
             )));
         }
 
