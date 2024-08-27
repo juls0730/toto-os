@@ -2,12 +2,9 @@ use core::arch::x86_64::__cpuid;
 
 use limine::memory_map::EntryType;
 
-use crate::{
-    hcf,
-    libs::{
-        cell::OnceCell,
-        limine::{get_hhdm_offset, get_kernel_address, get_memmap, get_paging_level},
-    },
+use crate::libs::{
+    cell::OnceCell,
+    limine::{get_hhdm_offset, get_kernel_address, get_memmap, get_paging_level},
 };
 
 use super::{align_down, align_up, pmm::pmm_alloc, PhysicalPtr};
@@ -17,7 +14,7 @@ const PT_FLAG_WRITE: u64 = 1 << 1;
 const PT_FLAG_USER: u64 = 1 << 2;
 const PT_FLAG_LARGE: u64 = 1 << 7;
 const PT_FLAG_NX: u64 = 1 << 63;
-const PT_PADDR_MASK: u64 = 0x000F_FFFF_FFFF_FFFF;
+const PT_PADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
 
 const PT_TABLE_FLAGS: u64 = PT_FLAG_VALID | PT_FLAG_WRITE | PT_FLAG_USER;
 
@@ -137,7 +134,19 @@ pub fn vmm_init() {
 
     unsafe { KENREL_PAGE_DIRECTORY = page_directory as *mut PageDirectory };
 
-    let mut i = 0;
+    let mut i = 0_usize;
+    while i < 0x100000000 {
+        vmm_map(
+            page_directory,
+            i + get_hhdm_offset(),
+            i,
+            PT_FLAG_WRITE,
+            PageSize::Size1GiB,
+        );
+
+        i += 0x40000000;
+    }
+
     for entry in get_memmap() {
         if entry.entry_type != EntryType::KERNEL_AND_MODULES {
             continue;
@@ -145,45 +154,22 @@ pub fn vmm_init() {
 
         let kernel_addr = get_kernel_address();
 
-        let base = kernel_addr.physical_base();
-        let length = entry.length;
-        let top = base + length;
+        let base = kernel_addr.physical_base() as usize;
+        let length = entry.length as usize;
 
-        let aligned_base = align_down(base as usize, 0x40000000);
-        let aligned_top = align_up(top as usize, 0x40000000);
-        let aligned_length = aligned_top - aligned_base;
+        crate::println!("{length:X} {base:X} {:X}", entry.base);
 
-        while i <= aligned_length {
-            let page = aligned_base + i;
-
-            crate::println!(
-                "Mapping the kernel from {:X} to {:X}",
-                page,
-                kernel_addr.virtual_base()
-            );
-
+        i = 0;
+        while i < length {
             vmm_map(
                 page_directory,
-                page + kernel_addr.virtual_base() as usize,
-                page as usize,
+                kernel_addr.virtual_base() as usize + i,
+                base + i,
                 0x02,
-                PageSize::Size1GiB,
+                PageSize::Size4KiB,
             );
-            i += 0x40000000
+            i += 0x1000;
         }
-    }
-
-    while i <= 0x100000000 {
-        // vmm_map(page_directory, i, i, 0x03, PageSize::Size4KiB);
-        vmm_map(
-            page_directory,
-            i + get_hhdm_offset(),
-            i,
-            0x02,
-            PageSize::Size1GiB,
-        );
-
-        i += 0x40000000;
     }
 
     for entry in get_memmap() {
@@ -227,33 +213,6 @@ pub fn vmm_init() {
             );
 
             i += 0x40000000;
-        }
-    }
-
-    for entry in get_memmap() {
-        if entry.entry_type != EntryType::FRAMEBUFFER {
-            continue;
-        }
-
-        let base = entry.base;
-        let length = entry.length;
-        let top = base + length;
-
-        let aligned_base = align_down(base as usize, 0x1000);
-        let aligned_top = align_up(top as usize, 0x1000);
-        let aligned_length = aligned_top - aligned_base;
-
-        while i < aligned_length {
-            let page = aligned_base + i;
-            vmm_map(
-                page_directory,
-                page + get_hhdm_offset(),
-                page,
-                0x02 | 1 << 3,
-                PageSize::Size4KiB,
-            );
-
-            i += 0x1000;
         }
     }
 
@@ -382,8 +341,6 @@ fn get_next_level(
             let old_page_size = PAGE_SIZES[level];
             let new_page_size = PAGE_SIZES[desired_size as usize];
 
-            crate::println!("OLD {old_page_size:X} NEW {new_page_size:X}");
-
             // ((x) & (PT_FLAG_WRITE | PT_FLAG_NX))
             let old_flags = page_directory.entries[entry].vmm_flags();
             let old_phys = page_directory.entries[entry].addr();
@@ -467,22 +424,7 @@ unsafe fn va_space_switch(page_directory: &mut PageDirectory) {
         "Page directory pointer is not aligned"
     );
 
-    let mut cr3 = 0;
-    unsafe { core::arch::asm!("mov rax, cr3", out("rax") cr3) };
-
-    crate::println!("{cr3:X}");
-
-    // hcf();
-
     unsafe { core::arch::asm!("mov cr3, {0:r}", in(reg) pd_ptr) };
-    // test(pd_ptr);
 
     crate::println!("waa");
-}
-
-#[naked]
-pub extern "C" fn test(ptr: *mut u8) {
-    unsafe {
-        core::arch::asm!("mov cr3, rdi", "ret", options(noreturn));
-    }
 }

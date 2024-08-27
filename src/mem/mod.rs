@@ -278,12 +278,7 @@ pub static ALLOCATOR: Mutex<LinkedListAllocator> = Mutex::new(LinkedListAllocato
 
 // TODO: Limine-rs 0.2.0 does NOT have debug implemented for a lot of it's types, so until that is fixed, either go without Type, or hack limine-rs locally (tracking https://github.com/limine-bootloader/limine-rs/pull/30)
 // pub fn log_memory_map() {
-//     let memmap_request = unsafe { MEMMAP_REQUEST.get_response_mut() };
-//     if memmap_request.is_none() {
-//         panic!("Memory map was None!");
-//     }
-
-//     let memmap = memmap_request.unwrap().entries();
+//     let memmap = get_memmap();
 
 //     crate::log!(LogLevel::Trace, "====== MEMORY MAP ======");
 //     for entry in memmap.iter() {

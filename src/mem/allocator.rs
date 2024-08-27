@@ -46,7 +46,8 @@ impl LinkedListAllocator {
 
     pub fn init(&mut self, pages: usize) {
         unsafe {
-            self.add_free_region(pmm_alloc(1).to_higher_half(), PAGE_SIZE * pages);
+            // fucking kill me
+            self.add_free_region(pmm_alloc(pages).to_higher_half(), PAGE_SIZE * pages);
         }
     }
 
