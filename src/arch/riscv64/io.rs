@@ -1,3 +1,5 @@
+use crate::mem::VirtualPtr;
+
 #[inline(always)]
 pub fn outb(port: u16, value: u8) {
     return;

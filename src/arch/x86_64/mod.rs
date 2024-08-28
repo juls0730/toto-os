@@ -1,6 +1,7 @@
 pub mod gdt;
 pub mod interrupts;
 pub mod io;
+pub mod paging;
 pub mod stack_trace;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

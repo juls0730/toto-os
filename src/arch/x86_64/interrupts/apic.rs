@@ -187,9 +187,7 @@ impl APIC {
 
         let smp_request = crate::libs::limine::get_smp();
 
-        if smp_request.is_none() {
-            panic!("Failed to get smp from limine!");
-        }
+        assert!(smp_request.is_some(), "Failed to get smp from limine!");
 
         let smp_request = smp_request.unwrap();
         let bsp_lapic_id = smp_request.bsp_lapic_id();

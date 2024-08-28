@@ -130,7 +130,7 @@ pub extern "C" fn syscall() {
 }
 
 pub extern "C" fn syscall_handler(_rdi: u64, _rsi: u64, rdx: u64, rcx: u64) {
-    let buf: VirtualPtr<u8> = unsafe { VirtualPtr::from(rdx as usize) }; // Treat as pointer to u8 (byte array)
+    let buf: VirtualPtr<u8> = VirtualPtr::from(rdx as usize); // Treat as pointer to u8 (byte array)
     let count = rcx as usize;
 
     let slice = unsafe { core::slice::from_raw_parts(buf.as_raw_ptr(), count) };

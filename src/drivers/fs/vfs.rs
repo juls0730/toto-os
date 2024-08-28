@@ -86,9 +86,7 @@ impl Vfs {
     }
 
     pub fn mount(&mut self, path: &str) {
-        if self.fs.is_none() {
-            panic!("FsOps is null");
-        }
+        assert!(self.fs.is_some(), "FsOps is null!");
 
         let vfsp = self.as_ptr();
 
@@ -100,9 +98,7 @@ impl Vfs {
     }
 
     pub fn unmount(&mut self) {
-        if self.fs.is_none() {
-            panic!("FsOps is null");
-        }
+        assert!(self.fs.is_some(), "FsOps is null!");
 
         let vfsp = self.as_ptr();
 
@@ -110,9 +106,7 @@ impl Vfs {
     }
 
     pub fn root(&mut self) -> VNode {
-        if self.fs.is_none() {
-            panic!("FsOps is null");
-        }
+        assert!(self.fs.is_some(), "FsOps is null!");
 
         let vfsp = self.as_ptr();
 
@@ -120,9 +114,7 @@ impl Vfs {
     }
 
     pub fn statfs(&mut self) -> StatFs {
-        if self.fs.is_none() {
-            panic!("FsOps is null");
-        }
+        assert!(self.fs.is_some(), "FsOps is null!");
 
         let vfsp = self.as_ptr();
 
@@ -130,9 +122,7 @@ impl Vfs {
     }
 
     pub fn sync(&mut self) {
-        if self.fs.is_none() {
-            panic!("FsOps is null");
-        }
+        assert!(self.fs.is_some(), "FsOps is null!");
 
         let vfsp = self.as_ptr();
 
@@ -140,9 +130,7 @@ impl Vfs {
     }
 
     pub fn fid(&mut self, path: &str) -> Option<FileId> {
-        if self.fs.is_none() {
-            panic!("FsOps is null");
-        }
+        assert!(self.fs.is_some(), "FsOps is null!");
 
         let vfsp = self.as_ptr();
 
@@ -150,9 +138,7 @@ impl Vfs {
     }
 
     pub fn vget(&mut self, fid: FileId) -> VNode {
-        if self.fs.is_none() {
-            panic!("FsOps is null");
-        }
+        assert!(self.fs.is_some(), "FsOps is null!");
 
         let vfsp = self.as_ptr();
 

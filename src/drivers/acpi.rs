@@ -162,9 +162,7 @@ static ACPI: OnceCell<ACPI> = OnceCell::new();
 
 fn resolve_acpi() {
     let rsdp_ptr = crate::libs::limine::get_rdsp_ptr();
-    if rsdp_ptr.is_none() {
-        panic!("RSDP not found!");
-    }
+    assert!(rsdp_ptr.is_some(), "RSDP not found!");
 
     let rsdp = unsafe { &*rsdp_ptr.unwrap().cast::<RSDP>() };
 

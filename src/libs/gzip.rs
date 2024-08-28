@@ -144,9 +144,11 @@ impl InflateContext {
     pub fn get_bit(&mut self) -> bool {
         if self.bit_index == 8 {
             self.input_buf.remove(0);
-            if self.input_buf.is_empty() {
-                panic!("Not enough data! {:X?}", self.output_buf);
-            }
+            assert!(
+                !self.input_buf.is_empty(),
+                "Not enough data! {:X?}",
+                self.output_buf
+            );
 
             self.bit_index = 0;
         }

@@ -10,16 +10,13 @@ use super::vfs::{FsOps, VNode, VNodeOperations, VNodeType};
 pub fn init() -> Squashfs<'static> {
     let initramfs = crate::libs::limine::get_module("initramfs.img");
 
-    if initramfs.is_none() {
-        panic!("Initramfs was not found!");
-    }
+    assert!(initramfs.is_some(), "initramfs was not found!");
+
     let initramfs = initramfs.unwrap();
 
     let squashfs = Squashfs::new(initramfs.addr());
 
-    if squashfs.is_err() {
-        panic!("Initramfs in corrupt!");
-    }
+    assert!(squashfs.is_ok(), "Initramfs is corrupt!");
 
     let squashfs = squashfs.unwrap();
 

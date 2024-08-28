@@ -588,15 +588,14 @@ fn ide_initialize(bar0: u32, bar1: u32, _bar2: u32, _bar3: u32, _bar4: u32) {
 
         let mbr_sector: MBR = (*drive.read(0, 1).expect("Failed to read first sector")).into();
 
-        if u16::from_le_bytes(mbr_sector.signature) != 0xAA55 {
-            panic!("MBR is corrupted!");
-        }
+        assert_eq!(u16::from_le_bytes(mbr_sector.signature), 0xAA55);
 
         let mbr_partitions = mbr_sector.partitions();
 
-        if mbr_partitions[0].partition_type != 0xEE {
-            panic!("MBR disks are unsupported")
-        }
+        assert_eq!(
+            mbr_partitions[0].partition_type, 0xEE,
+            "MBR disks are unsupported!"
+        );
 
         let gpt_sector = drive.read(1, 1).expect("Failed to read sector 2");
 

@@ -138,9 +138,7 @@ fn draw_gradient() {
 
     let buffer_ptr = crate::mem::pmm::pmm_alloc(pages).to_higher_half();
 
-    if buffer_ptr.is_null() {
-        panic!("Failed to allocate screen buffer")
-    }
+    assert!(!buffer_ptr.is_null(), "Failed to allocate screen buffer!");
 
     let buffer =
         unsafe { core::slice::from_raw_parts_mut(buffer_ptr.cast::<u32>().as_raw_ptr(), length) };

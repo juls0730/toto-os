@@ -57,10 +57,7 @@ static PAGING_REQUEST: limine::request::PagingModeRequest =
     limine::request::PagingModeRequest::new();
 
 pub fn get_module<'a>(module_name: &str) -> Option<&'a File> {
-    if MODULE_REQUEST.get_response().is_none() {
-        panic!("Module request in none!");
-    }
-    let module_response = MODULE_REQUEST.get_response().unwrap();
+    let module_response = MODULE_REQUEST.get_response()?;
 
     let mut file = None;
 
